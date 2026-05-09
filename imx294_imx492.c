@@ -31,6 +31,9 @@
 #define IMX29X_NUM_DATA_LANES	4
 #define IMX29X_TIMING_CLOCK_HZ		72000000ULL
 
+/* SVR scales the vertical period in the sensor exposure timing formula. */
+#define IMX29X_REG_SVR		0x300E
+
 /* VMAX internal VBLANK*/
 #define IMX29X_REG_VMAX		0x30A9
 #define IMX29X_VMAX_MAX		0xfffff
@@ -276,6 +279,15 @@ static const struct imx29x_reg imx29x_stream_on_regs[] = {
 
 #include "imx29x_mode_tables.h"
 
+/*
+ * IMX294 native readout startup sequence.
+ *
+ * This table contains the datasheet PLL/MIPI timing and mode-independent
+ * readout setup shared by the native IMX294 modes.  The timing registers near
+ * the end are startup seeds only: the active V4L2 exposure, VBLANK, and HBLANK
+ * controls rewrite SHR, VMAX, HMAX, HCOUNT1, HCOUNT2, and PSSLVS before the
+ * sensor leaves standby for streaming.
+ */
 static const struct imx29x_reg imx294_common_regs[] = {
 	/* STANDBY = 0, STBLOGIC = 1h, STBMIPI = 0h, STBDV = 1h */
 	{0x3000, 0x12},
@@ -459,40 +471,38 @@ static const struct imx29x_reg imx294_common_regs[] = {
 	{0x3847, 0x00}, /* MDSEL9 */
 	{0x384A, 0x00}, /* MDSEL10 */
 	{0x384B, 0x00}, /* MDSEL10 */
-	/* SVR = 0 */
-	{0x300E, 0x00},
-	{0x300F, 0x00},
 
-	/* SHR = 100 */
-	{0x302C, 0x10},
-	{0x302D, 0x00},
-
-	/* VMAX = 5000 */
-	{0x30A9, 0x88},
-	{0x30AA, 0x13},
-	{0x30AB, 0x00},
-
-	/* HMAX = 1200 */
-	{0x30AC, 0xB0},
-	{0x30AD, 0x04},
+	/*
+	 * Startup timing seeds.  SVR must stay at zero because the driver timing
+	 * math assumes the normal (SVR + 1) frame period.
+	 */
+	{IMX29X_REG_SVR, 0x00},		/* SVR = 0 */
+	{IMX29X_REG_SVR + 1, 0x00},
+	{IMX29X_REG_SHR, 0x10},		/* SHR = 0x0010 */
+	{IMX29X_REG_SHR + 1, 0x00},
+	{IMX29X_REG_VMAX, 0x88},		/* VMAX = 5000 */
+	{IMX29X_REG_VMAX + 1, 0x13},
+	{IMX29X_REG_VMAX + 2, 0x00},
+	{IMX29X_REG_HMAX, 0xB0},		/* HMAX = 1200 */
+	{IMX29X_REG_HMAX + 1, 0x04},
 	/* HCOUNT1 Set the same value as HMAX */
-	{0x3084, 0xB0},
-	{0x3085, 0x04},
+	{IMX29X_REG_HCOUNT1, 0xB0},
+	{IMX29X_REG_HCOUNT1 + 1, 0x04},
 	/* HCOUNT2 Set the same value as HMAX */
-	{0x3086, 0xB0},
-	{0x3087, 0x04},
+	{IMX29X_REG_HCOUNT2, 0xB0},
+	{IMX29X_REG_HCOUNT2 + 1, 0x04},
 
 	/* PSSLVS1 = VBLK = VMAX * (SVR + 1) - minimum VMAX */
-	{0x332C, 0x00},
-	{0x332D, 0x00},
-	{0x334A, 0x00}, /* PSSLVS2 = VBLK */
-	{0x334B, 0x00},
-	{0x35B6, 0x00}, /* PSSLVS3 = VBLK */
-	{0x35B7, 0x00},
-	{0x35B8, 0x00}, /* PSSLVS4 = VBLK - 5 */
-	{0x35B9, 0x00},
-	{0x36BC, 0x00}, /* PSSLVS0 = VBLK */
-	{0x36BD, 0x00},
+	{IMX29X_REG_PSSLVS1, 0x00},
+	{IMX29X_REG_PSSLVS1 + 1, 0x00},
+	{IMX29X_REG_PSSLVS2, 0x00}, /* PSSLVS2 = VBLK */
+	{IMX29X_REG_PSSLVS2 + 1, 0x00},
+	{IMX29X_REG_PSSLVS3, 0x00}, /* PSSLVS3 = VBLK */
+	{IMX29X_REG_PSSLVS3 + 1, 0x00},
+	{IMX29X_REG_PSSLVS4, 0x00}, /* PSSLVS4 = VBLK - 5 */
+	{IMX29X_REG_PSSLVS4 + 1, 0x00},
+	{IMX29X_REG_PSSLVS0, 0x00}, /* PSSLVS0 = VBLK */
+	{IMX29X_REG_PSSLVS0 + 1, 0x00},
 };
 
 #include "imx294_quad_mode_tables.h"
@@ -964,7 +974,10 @@ static const u32 imx294_color_codes[] = {
 /*
  * The 12-bit binned modes use the IMX294-style startup table.  The shorter
  * IMX29X full-resolution startup sequence does not bring these modes out of
- * standby reliably on the colour IMX29X.
+ * standby reliably on the colour IMX492.  Keep this table intentionally close
+ * to imx294_common_regs; it has the same startup timing seeds and the final
+ * per-mode timing is still applied by the active V4L2 controls before stream
+ * on.
  */
 static const struct imx29x_reg imx492_binned_common_regs[] = {
 	{0x3000, 0x12},
@@ -1148,29 +1161,34 @@ static const struct imx29x_reg imx492_binned_common_regs[] = {
 	{0x3847, 0x00},
 	{0x384A, 0x00},
 	{0x384B, 0x00},
-	{0x300E, 0x00},
-	{0x300F, 0x00},
-	{0x302C, 0x10},
-	{0x302D, 0x00},
-	{0x30A9, 0x88},
-	{0x30AA, 0x13},
-	{0x30AB, 0x00},
-	{0x30AC, 0xB0},
-	{0x30AD, 0x04},
-	{0x3084, 0xB0},
-	{0x3085, 0x04},
-	{0x3086, 0xB0},
-	{0x3087, 0x04},
-	{0x332C, 0x00},
-	{0x332D, 0x00},
-	{0x334A, 0x00},
-	{0x334B, 0x00},
-	{0x35B6, 0x00},
-	{0x35B7, 0x00},
-	{0x35B8, 0x00},
-	{0x35B9, 0x00},
-	{0x36BC, 0x00},
-	{0x36BD, 0x00},
+
+	/*
+	 * Startup timing seeds.  SVR must stay at zero because the driver timing
+	 * math assumes the normal (SVR + 1) frame period.
+	 */
+	{IMX29X_REG_SVR, 0x00},		/* SVR = 0 */
+	{IMX29X_REG_SVR + 1, 0x00},
+	{IMX29X_REG_SHR, 0x10},		/* SHR = 0x0010 */
+	{IMX29X_REG_SHR + 1, 0x00},
+	{IMX29X_REG_VMAX, 0x88},		/* VMAX = 5000 */
+	{IMX29X_REG_VMAX + 1, 0x13},
+	{IMX29X_REG_VMAX + 2, 0x00},
+	{IMX29X_REG_HMAX, 0xB0},		/* HMAX = 1200 */
+	{IMX29X_REG_HMAX + 1, 0x04},
+	{IMX29X_REG_HCOUNT1, 0xB0},	/* HCOUNT1 = HMAX */
+	{IMX29X_REG_HCOUNT1 + 1, 0x04},
+	{IMX29X_REG_HCOUNT2, 0xB0},	/* HCOUNT2 = HMAX */
+	{IMX29X_REG_HCOUNT2 + 1, 0x04},
+	{IMX29X_REG_PSSLVS1, 0x00},	/* PSSLVS1 = VBLK */
+	{IMX29X_REG_PSSLVS1 + 1, 0x00},
+	{IMX29X_REG_PSSLVS2, 0x00},	/* PSSLVS2 = VBLK */
+	{IMX29X_REG_PSSLVS2 + 1, 0x00},
+	{IMX29X_REG_PSSLVS3, 0x00},	/* PSSLVS3 = VBLK */
+	{IMX29X_REG_PSSLVS3 + 1, 0x00},
+	{IMX29X_REG_PSSLVS4, 0x00},	/* PSSLVS4 = VBLK - 5 */
+	{IMX29X_REG_PSSLVS4 + 1, 0x00},
+	{IMX29X_REG_PSSLVS0, 0x00},	/* PSSLVS0 = VBLK */
+	{IMX29X_REG_PSSLVS0 + 1, 0x00},
 };
 
 /* IMX492 color sensors can opt in to the IMX294-style 12-bit binned mode. */
