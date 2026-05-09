@@ -97,6 +97,7 @@
 #define IMX29X_REG_TEST_PATTERN_CTRL	0x303A
 #define IMX29X_REG_TEST_PATTERN_SEL	0x303B
 #define IMX29X_TEST_PATTERN_ENABLE_MIPI	0x11
+#define IMX29X_BINNED_COMMON_BLKLEVEL_INSERT	2
 
 /*
  * Native image payload and active/effective pixel array. The sensor can
@@ -277,13 +278,15 @@ static const struct imx29x_reg imx29x_stream_on_regs[] = {
 #include "imx29x_mode_tables.h"
 
 /*
- * IMX294 native readout startup sequence.
+ * IMX294-style binned/native readout startup sequence.
  *
  * This table contains the datasheet PLL/MIPI timing and mode-independent
- * readout setup shared by the native IMX294 modes.  The timing registers near
- * the end are startup seeds only: the active V4L2 exposure, VBLANK, and HBLANK
- * controls rewrite SHR, VMAX, HMAX, HCOUNT1, HCOUNT2, and PSSLVS before the
- * sensor leaves standby for streaming.
+ * readout setup shared by the native IMX294 modes and the IMX492 12-bit binned
+ * mode.  IMX492 inserts one black-level seed after the first two writes through
+ * imx29x_write_binned_common_regs().  The timing registers near the end are
+ * startup seeds only: the active V4L2 exposure, VBLANK, and HBLANK controls
+ * rewrite SHR, VMAX, HMAX, HCOUNT1, HCOUNT2, and PSSLVS before the sensor
+ * leaves standby for streaming.
  */
 static const struct imx29x_reg imx294_common_regs[] = {
 	/* STANDBY = 0, STBLOGIC = 1h, STBMIPI = 0h, STBDV = 1h */
@@ -968,226 +971,6 @@ static const u32 imx294_color_codes[] = {
 	MEDIA_BUS_FMT_SRGGB14_1X14,
 };
 
-/*
- * The 12-bit binned modes use the IMX294-style startup table.  The shorter
- * IMX29X full-resolution startup sequence does not bring these modes out of
- * standby reliably on the colour IMX492.  Keep this table intentionally close
- * to imx294_common_regs; it has the same startup timing seeds and the final
- * per-mode timing is still applied by the active V4L2 controls before stream
- * on.  The functional delta is the explicit IMX492 black-level seed below.
- */
-static const struct imx29x_reg imx492_binned_common_regs[] = {
-	{0x3000, 0x12},
-	{0x310B, 0x00},
-	{IMX29X_REG_BLKLEVEL, IMX29X_BLKLEVEL_DEFAULT},
-	{0x3047, 0x01},
-	{0x304E, 0x0B},
-	{0x304F, 0x24},
-	{0x3062, 0x25},
-	{0x3064, 0x78},
-	{0x3065, 0x33},
-	{0x3067, 0x71},
-	{0x3088, 0x75},
-	{0x308A, 0x09},
-	{0x308B, 0x01},
-	{0x308C, 0x61},
-	{0x3146, 0x00},
-	{0x3234, 0x32},
-	{0x3235, 0x00},
-	{0x3248, 0xBC},
-	{0x3249, 0x00},
-	{0x3250, 0xBC},
-	{0x3251, 0x00},
-	{0x3258, 0xBC},
-	{0x3259, 0x00},
-	{0x3260, 0xBC},
-	{0x3261, 0x00},
-	{0x3274, 0x13},
-	{0x3275, 0x00},
-	{0x3276, 0x1F},
-	{0x3277, 0x00},
-	{0x3278, 0x30},
-	{0x3279, 0x00},
-	{0x327C, 0x13},
-	{0x327D, 0x00},
-	{0x327E, 0x1F},
-	{0x327F, 0x00},
-	{0x3280, 0x30},
-	{0x3281, 0x00},
-	{0x3284, 0x13},
-	{0x3285, 0x00},
-	{0x3286, 0x1F},
-	{0x3287, 0x00},
-	{0x3288, 0x30},
-	{0x3289, 0x00},
-	{0x328C, 0x13},
-	{0x328D, 0x00},
-	{0x328E, 0x1F},
-	{0x328F, 0x00},
-	{0x3290, 0x30},
-	{0x3291, 0x00},
-	{0x32AE, 0x00},
-	{0x32AF, 0x00},
-	{0x32CA, 0x5A},
-	{0x32CB, 0x00},
-	{0x332F, 0x00},
-	{0x334C, 0x01},
-	{0x335A, 0x79},
-	{0x335B, 0x00},
-	{0x335E, 0x56},
-	{0x335F, 0x00},
-	{0x3360, 0x6A},
-	{0x3361, 0x00},
-	{0x336A, 0x56},
-	{0x336B, 0x00},
-	{0x33D6, 0x79},
-	{0x33D7, 0x00},
-	{0x340C, 0x6E},
-	{0x340D, 0x00},
-	{0x3448, 0x7E},
-	{0x3449, 0x00},
-	{0x348E, 0x6F},
-	{0x348F, 0x00},
-	{0x3492, 0x11},
-	{0x34C4, 0x5A},
-	{0x34C5, 0x00},
-	{0x3506, 0x56},
-	{0x3507, 0x00},
-	{0x350C, 0x56},
-	{0x350D, 0x00},
-	{0x350E, 0x58},
-	{0x350F, 0x00},
-	{0x3549, 0x04},
-	{0x355D, 0x03},
-	{0x355E, 0x03},
-	{0x3574, 0x56},
-	{0x3575, 0x00},
-	{0x3587, 0x01},
-	{0x35D0, 0x5E},
-	{0x35D1, 0x00},
-	{0x35D4, 0x63},
-	{0x35D5, 0x00},
-	{0x366A, 0x1A},
-	{0x366B, 0x16},
-	{0x366C, 0x10},
-	{0x366D, 0x09},
-	{0x366E, 0x00},
-	{0x366F, 0x00},
-	{0x3670, 0x00},
-	{0x3671, 0x00},
-	{0x3676, 0x83},
-	{0x3677, 0x03},
-	{0x3678, 0x00},
-	{0x3679, 0x04},
-	{0x367A, 0x2C},
-	{0x367B, 0x05},
-	{0x367C, 0x00},
-	{0x367D, 0x06},
-	{0x367E, 0x00},
-	{0x367F, 0x07},
-	{0x3680, 0x4B},
-	{0x3681, 0x07},
-	{0x3690, 0x27},
-	{0x3691, 0x00},
-	{0x3692, 0x65},
-	{0x3693, 0x00},
-	{0x3694, 0x4F},
-	{0x3695, 0x00},
-	{0x3696, 0xA1},
-	{0x3697, 0x00},
-	{0x382B, 0x68},
-	{0x3C00, 0x01},
-	{0x3C01, 0x01},
-	{0x3686, 0x00},
-	{0x3687, 0x00},
-	{0x36BE, 0x01},
-	{0x36BF, 0x00},
-	{0x36C0, 0x01},
-	{0x36C1, 0x00},
-	{0x36C2, 0x01},
-	{0x36C3, 0x00},
-	{0x36C4, 0x01},
-	{0x36C5, 0x01},
-	{0x36C6, 0x01},
-	{0x3134, 0xAF},
-	{0x3135, 0x00},
-	{0x3136, 0xC7},
-	{0x3137, 0x00},
-	{0x3138, 0x7F},
-	{0x3139, 0x00},
-	{0x313A, 0x6F},
-	{0x313B, 0x00},
-	{0x313C, 0x6F},
-	{0x313D, 0x00},
-	{0x313E, 0xCF},
-	{0x313F, 0x01},
-	{0x3140, 0x77},
-	{0x3141, 0x00},
-	{0x3142, 0x5F},
-	{0x3143, 0x00},
-	{0x3004, 0x1A},
-	{0x3005, 0x06},
-	{0x3006, 0x00},
-	{0x3007, 0xA0},
-	{0x3019, 0x00},
-	{0x3030, 0x77},
-	{0x3034, 0x00},
-	{0x3035, 0x01},
-	{0x3036, 0x30},
-	{0x3037, 0x00},
-	{0x3038, 0x60},
-	{0x3039, 0x10},
-	{0x3068, 0x1A},
-	{0x3069, 0x00},
-	{0x3080, 0x00},
-	{0x3081, 0x01},
-	{0x30A8, 0x02},
-	{0x30E2, 0x00},
-	{0x312F, 0x08},
-	{0x3130, 0x88},
-	{0x3131, 0x08},
-	{0x3132, 0x80},
-	{0x3133, 0x08},
-	{0x357F, 0x0C},
-	{0x3580, 0x0A},
-	{0x3581, 0x08},
-	{0x3583, 0x72},
-	{0x3600, 0x90},
-	{0x3601, 0x00},
-	{0x3846, 0x00},
-	{0x3847, 0x00},
-	{0x384A, 0x00},
-	{0x384B, 0x00},
-
-	/*
-	 * Startup timing seeds.  SVR must stay at zero because the driver timing
-	 * math assumes the normal (SVR + 1) frame period.
-	 */
-	{IMX29X_REG_SVR, 0x00},		/* SVR = 0 */
-	{IMX29X_REG_SVR + 1, 0x00},
-	{IMX29X_REG_SHR, 0x10},		/* SHR = 0x0010 */
-	{IMX29X_REG_SHR + 1, 0x00},
-	{IMX29X_REG_VMAX, 0x88},		/* VMAX = 5000 */
-	{IMX29X_REG_VMAX + 1, 0x13},
-	{IMX29X_REG_VMAX + 2, 0x00},
-	{IMX29X_REG_HMAX, 0xB0},		/* HMAX = 1200 */
-	{IMX29X_REG_HMAX + 1, 0x04},
-	{IMX29X_REG_HCOUNT1, 0xB0},	/* HCOUNT1 = HMAX */
-	{IMX29X_REG_HCOUNT1 + 1, 0x04},
-	{IMX29X_REG_HCOUNT2, 0xB0},	/* HCOUNT2 = HMAX */
-	{IMX29X_REG_HCOUNT2 + 1, 0x04},
-	{IMX29X_REG_PSSLVS1, 0x00},	/* PSSLVS1 = VBLK */
-	{IMX29X_REG_PSSLVS1 + 1, 0x00},
-	{IMX29X_REG_PSSLVS2, 0x00},	/* PSSLVS2 = VBLK */
-	{IMX29X_REG_PSSLVS2 + 1, 0x00},
-	{IMX29X_REG_PSSLVS3, 0x00},	/* PSSLVS3 = VBLK */
-	{IMX29X_REG_PSSLVS3 + 1, 0x00},
-	{IMX29X_REG_PSSLVS4, 0x00},	/* PSSLVS4 = VBLK - 5 */
-	{IMX29X_REG_PSSLVS4 + 1, 0x00},
-	{IMX29X_REG_PSSLVS0, 0x00},	/* PSSLVS0 = VBLK */
-	{IMX29X_REG_PSSLVS0 + 1, 0x00},
-};
-
 /* IMX492 color sensors can opt in to the IMX294-style 12-bit binned mode. */
 static const struct imx29x_reg imx492_binned_mode_00_regs[] = {
 	{0x3004, 0x00}, {0x3005, 0x06}, {0x3006, 0x02}, {0x3007, 0xA0},
@@ -1460,8 +1243,7 @@ struct imx29x_compatible_data {
 	bool supports_mono;
 	bool supports_quad_bayer_modes;
 	bool supports_color_binned_modes;
-	const struct imx29x_reg *binned_common_regs;
-	unsigned int num_binned_common_regs;
+	bool set_binned_blklevel;
 };
 
 struct imx29x {
@@ -1752,6 +1534,39 @@ static int imx29x_write_plrd_regs(struct imx29x *imx29x)
 {
 	return imx29x_write_regs(imx29x, imx29x->plrd_setup->regs,
 				 ARRAY_SIZE(imx29x->plrd_setup->regs));
+}
+
+/*
+ * IMX492 binned startup uses the IMX294-style common table with one extra
+ * black-level seed inserted after standby/PLL release. Keep the insertion
+ * point stable to preserve the previous register order.
+ */
+static int imx29x_write_binned_common_regs(struct imx29x *imx29x)
+{
+	const struct imx29x_compatible_data *data = imx29x->compatible_data;
+	const struct imx29x_reg *tail;
+	unsigned int tail_len;
+	int ret;
+
+	if (!data->set_binned_blklevel)
+		return imx29x_write_regs(imx29x, imx294_common_regs,
+					 ARRAY_SIZE(imx294_common_regs));
+
+	ret = imx29x_write_regs(imx29x, imx294_common_regs,
+				IMX29X_BINNED_COMMON_BLKLEVEL_INSERT);
+	if (ret)
+		return ret;
+
+	ret = imx29x_write_reg_1byte(imx29x, IMX29X_REG_BLKLEVEL,
+				     IMX29X_BLKLEVEL_DEFAULT);
+	if (ret)
+		return ret;
+
+	tail = imx294_common_regs + IMX29X_BINNED_COMMON_BLKLEVEL_INSERT;
+	tail_len = ARRAY_SIZE(imx294_common_regs) -
+		   IMX29X_BINNED_COMMON_BLKLEVEL_INSERT;
+
+	return imx29x_write_regs(imx29x, tail, tail_len);
 }
 
 static u32 imx29x_canonical_format_code(const struct imx29x *imx29x,
@@ -2403,7 +2218,6 @@ static int imx29x_start_streaming_output(struct imx29x *imx29x,
 static int imx29x_start_streaming_binned(struct imx29x *imx29x,
 					 const struct imx29x_mode *mode)
 {
-	const struct imx29x_compatible_data *data = imx29x->compatible_data;
 	struct i2c_client *client = v4l2_get_subdevdata(&imx29x->sd);
 	const struct imx29x_reg_list *reg_list = &mode->reg_list;
 	int ret;
@@ -2423,8 +2237,7 @@ static int imx29x_start_streaming_binned(struct imx29x *imx29x,
 		return ret;
 	}
 
-	ret = imx29x_write_regs(imx29x, data->binned_common_regs,
-				data->num_binned_common_regs);
+	ret = imx29x_write_binned_common_regs(imx29x);
 	if (ret) {
 		dev_err(&client->dev, "%s failed to set common settings\n",
 			__func__);
@@ -2917,29 +2730,21 @@ static void imx29x_free_controls(struct imx29x *imx29x)
 static const struct imx29x_compatible_data imx294_compatible = {
 	.model = IMX29X_MODEL_IMX294,
 	.supports_quad_bayer_modes = true,
-	.binned_common_regs = imx294_common_regs,
-	.num_binned_common_regs = ARRAY_SIZE(imx294_common_regs),
 };
 
 static const struct imx29x_compatible_data imx492_compatible = {
 	.model = IMX29X_MODEL_IMX492,
 	.supports_mono = true,
 	.supports_color_binned_modes = true,
-	.binned_common_regs = imx492_binned_common_regs,
-	.num_binned_common_regs = ARRAY_SIZE(imx492_binned_common_regs),
+	.set_binned_blklevel = true,
 };
 
-static const struct of_device_id imx294_dt_ids[] = {
+static const struct of_device_id imx29x_dt_ids[] = {
 	{ .compatible = "sony,imx294", .data = &imx294_compatible },
-	{ /* sentinel */ }
-};
-MODULE_DEVICE_TABLE(of, imx294_dt_ids);
-
-static const struct of_device_id imx492_dt_ids[] = {
 	{ .compatible = "sony,imx492", .data = &imx492_compatible },
 	{ /* sentinel */ }
 };
-MODULE_DEVICE_TABLE(of, imx492_dt_ids);
+MODULE_DEVICE_TABLE(of, imx29x_dt_ids);
 
 static int imx29x_probe(struct i2c_client *client)
 {
@@ -3103,48 +2908,16 @@ static const struct dev_pm_ops imx29x_pm_ops = {
 	RUNTIME_PM_OPS(imx29x_power_off, imx29x_power_on, NULL)
 };
 
-static struct i2c_driver imx294_i2c_driver = {
+static struct i2c_driver imx29x_i2c_driver = {
 	.driver = {
-		.name = "imx294",
-		.of_match_table	= imx294_dt_ids,
+		.name = "imx294_imx492",
+		.of_match_table	= imx29x_dt_ids,
 		.pm = pm_ptr(&imx29x_pm_ops),
 	},
 	.probe = imx29x_probe,
 	.remove = imx29x_remove,
 };
-
-static struct i2c_driver imx492_i2c_driver = {
-	.driver = {
-		.name = "imx492",
-		.of_match_table	= imx492_dt_ids,
-		.pm = pm_ptr(&imx29x_pm_ops),
-	},
-	.probe = imx29x_probe,
-	.remove = imx29x_remove,
-};
-
-static int __init imx29x_init(void)
-{
-	int ret;
-
-	ret = i2c_add_driver(&imx294_i2c_driver);
-	if (ret)
-		return ret;
-
-	ret = i2c_add_driver(&imx492_i2c_driver);
-	if (ret)
-		i2c_del_driver(&imx294_i2c_driver);
-
-	return ret;
-}
-module_init(imx29x_init);
-
-static void __exit imx29x_exit(void)
-{
-	i2c_del_driver(&imx492_i2c_driver);
-	i2c_del_driver(&imx294_i2c_driver);
-}
-module_exit(imx29x_exit);
+module_i2c_driver(imx29x_i2c_driver);
 
 MODULE_AUTHOR("Will Whang <will@willwhang.com>");
 MODULE_DESCRIPTION("Sony IMX294/IMX492 sensor driver");
