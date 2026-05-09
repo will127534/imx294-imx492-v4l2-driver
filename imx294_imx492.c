@@ -98,9 +98,6 @@
 #define IMX29X_REG_TEST_PATTERN_SEL	0x303B
 #define IMX29X_TEST_PATTERN_ENABLE_MIPI	0x11
 
-#define IMAGE_PAD 0
-#define NUM_PADS 1
-
 /*
  * Native image payload and active/effective pixel array. The sensor can
  * deliver OPB/dummy margin pixels around the active area, so the advertised
@@ -977,7 +974,7 @@ static const u32 imx294_color_codes[] = {
  * standby reliably on the colour IMX492.  Keep this table intentionally close
  * to imx294_common_regs; it has the same startup timing seeds and the final
  * per-mode timing is still applied by the active V4L2 controls before stream
- * on.
+ * on.  The functional delta is the explicit IMX492 black-level seed below.
  */
 static const struct imx29x_reg imx492_binned_common_regs[] = {
 	{0x3000, 0x12},
@@ -1460,7 +1457,6 @@ enum imx29x_model {
 
 struct imx29x_compatible_data {
 	enum imx29x_model model;
-	bool mono;
 	bool supports_mono;
 	bool supports_quad_bayer_modes;
 	bool supports_color_binned_modes;
@@ -1470,7 +1466,7 @@ struct imx29x_compatible_data {
 
 struct imx29x {
 	struct v4l2_subdev sd;
-	struct media_pad pad[NUM_PADS];
+	struct media_pad pad;
 
 	struct clk *xclk;
 	u32 xclk_freq;
@@ -1484,11 +1480,8 @@ struct imx29x {
 	struct v4l2_ctrl *link_freq;
 	struct v4l2_ctrl *pixel_rate;
 	struct v4l2_ctrl *exposure;
-	struct v4l2_ctrl *vflip;
-	struct v4l2_ctrl *hflip;
 	struct v4l2_ctrl *vblank;
 	struct v4l2_ctrl *hblank;
-	struct v4l2_ctrl *test_pattern;
 
 	u16 hmax;
 	u32 vmax;
@@ -1513,9 +1506,10 @@ static inline struct imx29x *to_imx29x(struct v4l2_subdev *_sd)
 	return container_of(_sd, struct imx29x, sd);
 }
 
-static inline void get_mode_table(struct imx29x *imx29x, unsigned int code,
-				  const struct imx29x_mode **mode_list,
-				  unsigned int *num_modes)
+static inline void imx29x_get_mode_table(struct imx29x *imx29x,
+					 unsigned int code,
+					 const struct imx29x_mode **mode_list,
+					 unsigned int *num_modes)
 {
 	if (imx29x->compatible_data->model == IMX29X_MODEL_IMX294) {
 		switch (code) {
@@ -1599,6 +1593,11 @@ static u64 imx29x_get_pixel_rate(u32 code)
 	return pixel_rate;
 }
 
+/*
+ * Output-override modes advertise CSI payload throughput directly. Native
+ * binned modes use a synthetic pixel rate derived from the sensor timing clock
+ * so V4L2 HBLANK still maps back to the HMAX line-period register.
+ */
 static u64 imx29x_get_mode_pixel_rate(struct imx29x *imx29x,
 				      const struct imx29x_mode *mode,
 				      u32 code)
@@ -1643,7 +1642,7 @@ static u64 imx29x_hmax_from_hblank(struct imx29x *imx29x,
 	return hmax;
 }
 
-/* Read registers up to 2 at a time */
+/* Read one register value, up to 4 bytes. */
 static int imx29x_read_reg(struct imx29x *imx29x, u16 reg, u32 len, u32 *val)
 {
 	struct i2c_client *client = v4l2_get_subdevdata(&imx29x->sd);
@@ -1655,13 +1654,13 @@ static int imx29x_read_reg(struct imx29x *imx29x, u16 reg, u32 len, u32 *val)
 	if (len > 4)
 		return -EINVAL;
 
-	/* Write register address */
+	/* Set register address. */
 	msgs[0].addr = client->addr;
 	msgs[0].flags = 0;
 	msgs[0].len = ARRAY_SIZE(addr_buf);
 	msgs[0].buf = addr_buf;
 
-	/* Read data from register */
+	/* Read register value. */
 	msgs[1].addr = client->addr;
 	msgs[1].flags = I2C_M_RD;
 	msgs[1].len = len;
@@ -1676,7 +1675,7 @@ static int imx29x_read_reg(struct imx29x *imx29x, u16 reg, u32 len, u32 *val)
 	return 0;
 }
 
-/* Write registers 1 byte at a time */
+/* Write one 1-byte register value. */
 static int imx29x_write_reg_1byte(struct imx29x *imx29x, u16 reg, u8 val)
 {
 	struct i2c_client *client = v4l2_get_subdevdata(&imx29x->sd);
@@ -1690,7 +1689,7 @@ static int imx29x_write_reg_1byte(struct imx29x *imx29x, u16 reg, u8 val)
 	return 0;
 }
 
-/* Write registers 2 byte at a time */
+/* Write one 2-byte register value. */
 static int imx29x_write_reg_2byte(struct imx29x *imx29x, u16 reg, u16 val)
 {
 	struct i2c_client *client = v4l2_get_subdevdata(&imx29x->sd);
@@ -1705,7 +1704,7 @@ static int imx29x_write_reg_2byte(struct imx29x *imx29x, u16 reg, u16 val)
 	return 0;
 }
 
-/* Write registers 3 byte at a time */
+/* Write one 3-byte register value. */
 static int imx29x_write_reg_3byte(struct imx29x *imx29x, u16 reg, u32 val)
 {
 	struct i2c_client *client = v4l2_get_subdevdata(&imx29x->sd);
@@ -1721,7 +1720,7 @@ static int imx29x_write_reg_3byte(struct imx29x *imx29x, u16 reg, u32 val)
 	return 0;
 }
 
-/* Write a list of 1 byte registers */
+/* Write a table of 1-byte register values. */
 static int imx29x_write_regs(struct imx29x *imx29x,
 			     const struct imx29x_reg *regs, u32 len)
 {
@@ -1839,7 +1838,7 @@ imx29x_find_mode(struct imx29x *imx29x, u32 code, u32 req_width,
 	const struct imx29x_mode *mode_list;
 	unsigned int num_modes;
 
-	get_mode_table(imx29x, code, &mode_list, &num_modes);
+	imx29x_get_mode_table(imx29x, code, &mode_list, &num_modes);
 	if (!mode_list || !num_modes)
 		return imx29x_default_mode(imx29x);
 
@@ -1852,23 +1851,11 @@ imx29x_state_get_mode(struct imx29x *imx29x, struct v4l2_subdev_state *state,
 		      u32 *code)
 {
 	struct v4l2_mbus_framefmt *fmt;
-	u32 fmt_code = imx29x_default_format_code(imx29x);
 
-	if (!state) {
-		*code = fmt_code;
-		return imx29x_default_mode(imx29x);
-	}
+	fmt = v4l2_subdev_state_get_format(state, 0);
+	*code = imx29x_get_format_code(imx29x, fmt->code);
 
-	fmt = v4l2_subdev_state_get_format(state, IMAGE_PAD);
-	if (!fmt) {
-		*code = fmt_code;
-		return imx29x_default_mode(imx29x);
-	}
-
-	fmt_code = imx29x_get_format_code(imx29x, fmt->code);
-	*code = fmt_code;
-
-	return imx29x_find_mode(imx29x, fmt_code, fmt->width, fmt->height);
+	return imx29x_find_mode(imx29x, *code, fmt->width, fmt->height);
 }
 
 static const struct imx29x_mode *
@@ -1881,8 +1868,8 @@ imx29x_get_active_mode(struct imx29x *imx29x, u32 *code)
 	return imx29x_state_get_mode(imx29x, state, code);
 }
 
-static u64 calculate_v4l2_cid_exposure(u64 hmax, u64 vmax, u64 shr,
-				       u64 svr, u64 offset)
+static u64 imx29x_exposure_from_shr(u64 hmax, u64 vmax, u64 shr, u64 svr,
+				    u64 offset)
 {
 	u64 numerator;
 
@@ -1893,7 +1880,7 @@ static u64 calculate_v4l2_cid_exposure(u64 hmax, u64 vmax, u64 shr,
 	return min_t(u64, numerator, 0xFFFFFFFF);
 }
 
-static u64 calculate_max_shr(u64 vmax, u64 svr, u64 max_shr_margin)
+static u64 imx29x_max_shr(u64 vmax, u64 svr, u64 max_shr_margin)
 {
 	u64 max_shr = (svr + 1) * vmax;
 
@@ -1905,19 +1892,19 @@ static u64 calculate_max_shr(u64 vmax, u64 svr, u64 max_shr_margin)
 	return min_t(u64, max_shr, 0xFFFF);
 }
 
-static void calculate_min_max_v4l2_cid_exposure(u64 hmax, u64 vmax,
-						u64 min_shr,
-						u64 max_shr_margin,
-						u64 svr, u64 offset,
-						u64 *min_exposure,
-						u64 *max_exposure)
+static void imx29x_exposure_limits_from_timing(u64 hmax, u64 vmax,
+					       u64 min_shr,
+					       u64 max_shr_margin,
+					       u64 svr, u64 offset,
+					       u64 *min_exposure,
+					       u64 *max_exposure)
 {
-	u64 max_shr = calculate_max_shr(vmax, svr, max_shr_margin);
+	u64 max_shr = imx29x_max_shr(vmax, svr, max_shr_margin);
 
-	*min_exposure = calculate_v4l2_cid_exposure(hmax, vmax, max_shr,
-						    svr, offset);
-	*max_exposure = calculate_v4l2_cid_exposure(hmax, vmax, min_shr,
-						    svr, offset);
+	*min_exposure = imx29x_exposure_from_shr(hmax, vmax, max_shr, svr,
+						 offset);
+	*max_exposure = imx29x_exposure_from_shr(hmax, vmax, min_shr, svr,
+						 offset);
 }
 
 static void imx29x_update_exposure_limits(struct imx29x *imx29x,
@@ -1926,11 +1913,11 @@ static void imx29x_update_exposure_limits(struct imx29x *imx29x,
 	struct i2c_client *client = v4l2_get_subdevdata(&imx29x->sd);
 	u64 current_exposure, max_exposure, min_exposure;
 
-	calculate_min_max_v4l2_cid_exposure(imx29x->hmax, imx29x->vmax,
-					    (u64)mode->min_shr,
-					    (u64)mode->max_shr_margin, 0,
-					    mode->integration_offset,
-					    &min_exposure, &max_exposure);
+	imx29x_exposure_limits_from_timing(imx29x->hmax, imx29x->vmax,
+					   (u64)mode->min_shr,
+					   (u64)mode->max_shr_margin, 0,
+					   mode->integration_offset,
+					   &min_exposure, &max_exposure);
 
 	current_exposure = clamp_t(u64, imx29x->exposure->val,
 				   min_exposure, max_exposure);
@@ -1951,10 +1938,11 @@ static void imx29x_update_exposure_limits(struct imx29x *imx29x,
  * Integration Time [s] = exposure * HMAX / (72 × 10^6)
  */
 
-static u32 calculate_shr(u32 exposure, u32 hmax, u64 vmax, u32 svr,
-			 u32 offset, u64 min_shr, u64 max_shr_margin)
+static u32 imx29x_shr_from_exposure(u32 exposure, u32 hmax, u64 vmax, u32 svr,
+				    u32 offset, u64 min_shr,
+				    u64 max_shr_margin)
 {
-	u64 max_shr = calculate_max_shr(vmax, svr, max_shr_margin);
+	u64 max_shr = imx29x_max_shr(vmax, svr, max_shr_margin);
 	u64 period = vmax * (svr + 1);
 	u64 temp;
 	u64 shr;
@@ -2038,9 +2026,11 @@ static int imx29x_set_ctrl(struct v4l2_ctrl *ctrl)
 			imx29x->vblank->val, imx29x->hblank->val);
 		dev_dbg(&client->dev, "\tVMAX:%d, HMAX:%d\n",
 			imx29x->vmax, imx29x->hmax);
-		shr = calculate_shr(ctrl->val, imx29x->hmax, imx29x->vmax,
-				    0, mode->integration_offset, mode->min_shr,
-				    mode->max_shr_margin);
+		shr = imx29x_shr_from_exposure(ctrl->val, imx29x->hmax,
+					       imx29x->vmax, 0,
+					       mode->integration_offset,
+					       mode->min_shr,
+					       mode->max_shr_margin);
 		dev_dbg(&client->dev, "\tSHR:%lld\n", shr);
 		ret = imx29x_write_reg_2byte(imx29x, IMX29X_REG_SHR, shr);
 		break;
@@ -2121,7 +2111,7 @@ static int imx29x_enum_mbus_code(struct v4l2_subdev *sd,
 {
 	struct imx29x *imx29x = to_imx29x(sd);
 
-	if (code->pad != IMAGE_PAD)
+	if (code->pad)
 		return -EINVAL;
 
 	if (imx29x->compatible_data->model == IMX29X_MODEL_IMX294) {
@@ -2149,14 +2139,13 @@ static int imx29x_enum_frame_size(struct v4l2_subdev *sd,
 				  struct v4l2_subdev_frame_size_enum *fse)
 {
 	struct imx29x *imx29x = to_imx29x(sd);
-
-	if (fse->pad != IMAGE_PAD)
-		return -EINVAL;
-
 	const struct imx29x_mode *mode_list;
 	unsigned int num_modes;
 
-	get_mode_table(imx29x, fse->code, &mode_list, &num_modes);
+	if (fse->pad)
+		return -EINVAL;
+
+	imx29x_get_mode_table(imx29x, fse->code, &mode_list, &num_modes);
 
 	if (fse->index >= num_modes)
 		return -EINVAL;
@@ -2182,8 +2171,7 @@ static void imx29x_reset_colorspace(struct v4l2_mbus_framefmt *fmt)
 	fmt->xfer_func = V4L2_MAP_XFER_FUNC_DEFAULT(fmt->colorspace);
 }
 
-static void imx29x_update_image_pad_format(struct imx29x *imx29x,
-					   const struct imx29x_mode *mode,
+static void imx29x_update_image_pad_format(const struct imx29x_mode *mode,
 					   struct v4l2_subdev_format *fmt)
 {
 	fmt->format.width = mode->width;
@@ -2193,9 +2181,9 @@ static void imx29x_update_image_pad_format(struct imx29x *imx29x,
 }
 
 /* Update timing-dependent control ranges for the selected image mode. */
-static void imx29x_set_framing_limits(struct imx29x *imx29x,
-				      const struct imx29x_mode *mode,
-				      u32 code)
+static void imx29x_reset_framing_ctrls(struct imx29x *imx29x,
+				       const struct imx29x_mode *mode,
+				       u32 code)
 {
 	struct i2c_client *client = v4l2_get_subdevdata(&imx29x->sd);
 	u64 def_hblank;
@@ -2255,20 +2243,21 @@ static int imx29x_set_pad_format(struct v4l2_subdev *sd,
 	unsigned int num_modes;
 	bool update_controls = false;
 
-	if (fmt->pad != IMAGE_PAD)
+	if (fmt->pad)
 		return -EINVAL;
 
 	/* Alternate Bayer orders are canonicalized to fixed native CFA. */
 	fmt->format.code = imx29x_get_format_code(imx29x, fmt->format.code);
 
-	get_mode_table(imx29x, fmt->format.code, &mode_list, &num_modes);
+	imx29x_get_mode_table(imx29x, fmt->format.code, &mode_list,
+			      &num_modes);
 
 	mode = v4l2_find_nearest_size(mode_list,
 				      num_modes,
 				      width, height,
 				      fmt->format.width,
 				      fmt->format.height);
-	imx29x_update_image_pad_format(imx29x, mode, fmt);
+	imx29x_update_image_pad_format(mode, fmt);
 	framefmt = v4l2_subdev_state_get_format(sd_state, fmt->pad);
 
 	update_controls = fmt->which == V4L2_SUBDEV_FORMAT_ACTIVE &&
@@ -2278,22 +2267,13 @@ static int imx29x_set_pad_format(struct v4l2_subdev *sd,
 
 	*framefmt = fmt->format;
 
-	crop = v4l2_subdev_state_get_crop(sd_state, IMAGE_PAD);
+	crop = v4l2_subdev_state_get_crop(sd_state, 0);
 	*crop = mode->crop;
 
 	if (update_controls)
-		imx29x_set_framing_limits(imx29x, mode, fmt->format.code);
+		imx29x_reset_framing_ctrls(imx29x, mode, fmt->format.code);
 
 	return 0;
-}
-
-/* Return the crop rectangle stored in the requested subdev state. */
-static const struct v4l2_rect *
-__imx29x_get_pad_crop(struct imx29x *imx29x,
-		      struct v4l2_subdev_state *sd_state,
-		      unsigned int pad, enum v4l2_subdev_format_whence which)
-{
-	return v4l2_subdev_state_get_crop(sd_state, pad);
 }
 
 static int imx29x_apply_output_overrides(struct imx29x *imx29x,
@@ -2476,15 +2456,9 @@ static int imx29x_start_streaming_binned(struct imx29x *imx29x,
 static int imx29x_start_streaming(struct imx29x *imx29x,
 				  struct v4l2_subdev_state *state)
 {
-	struct v4l2_subdev_state *locked_state = NULL;
 	const struct imx29x_mode *mode;
 	u32 fmt_code;
 	int ret;
-
-	if (!state) {
-		locked_state = v4l2_subdev_lock_and_get_active_state(&imx29x->sd);
-		state = locked_state;
-	}
 
 	mode = imx29x_state_get_mode(imx29x, state, &fmt_code);
 
@@ -2492,9 +2466,6 @@ static int imx29x_start_streaming(struct imx29x *imx29x,
 		ret = imx29x_start_streaming_output(imx29x, mode);
 	else
 		ret = imx29x_start_streaming_binned(imx29x, mode);
-
-	if (locked_state)
-		v4l2_subdev_unlock_state(locked_state);
 
 	return ret;
 }
@@ -2520,7 +2491,7 @@ static int imx29x_enable_streams(struct v4l2_subdev *sd,
 	struct i2c_client *client = v4l2_get_subdevdata(sd);
 	int ret = 0;
 
-	if (pad != IMAGE_PAD || streams_mask != BIT_ULL(0))
+	if (pad || streams_mask != BIT_ULL(0))
 		return -EINVAL;
 
 	if (v4l2_subdev_is_streaming(sd))
@@ -2556,7 +2527,7 @@ static int imx29x_disable_streams(struct v4l2_subdev *sd,
 	struct imx29x *imx29x = to_imx29x(sd);
 	struct i2c_client *client = v4l2_get_subdevdata(sd);
 
-	if (pad != IMAGE_PAD || streams_mask != BIT_ULL(0))
+	if (pad || streams_mask != BIT_ULL(0))
 		return -EINVAL;
 
 	if (sd->enabled_pads & ~BIT_ULL(pad))
@@ -2576,9 +2547,9 @@ static int imx29x_set_stream(struct v4l2_subdev *sd, int enable)
 	int ret;
 
 	if (enable)
-		ret = v4l2_subdev_enable_streams(sd, IMAGE_PAD, BIT_ULL(0));
+		ret = v4l2_subdev_enable_streams(sd, 0, BIT_ULL(0));
 	else
-		ret = v4l2_subdev_disable_streams(sd, IMAGE_PAD, BIT_ULL(0));
+		ret = v4l2_subdev_disable_streams(sd, 0, BIT_ULL(0));
 
 	return ret == -EALREADY ? 0 : ret;
 }
@@ -2646,11 +2617,14 @@ static int imx29x_resume(struct device *dev)
 {
 	struct i2c_client *client = to_i2c_client(dev);
 	struct v4l2_subdev *sd = i2c_get_clientdata(client);
+	struct v4l2_subdev_state *state;
 	struct imx29x *imx29x = to_imx29x(sd);
 	int ret;
 
 	if (imx29x->streaming) {
-		ret = imx29x_start_streaming(imx29x, NULL);
+		state = v4l2_subdev_lock_and_get_active_state(sd);
+		ret = imx29x_start_streaming(imx29x, state);
+		v4l2_subdev_unlock_state(state);
 		if (ret)
 			goto error;
 	}
@@ -2758,16 +2732,14 @@ static int imx29x_get_selection(struct v4l2_subdev *sd,
 				struct v4l2_subdev_state *sd_state,
 				struct v4l2_subdev_selection *sel)
 {
-	if (sel->pad != IMAGE_PAD)
+	if (sel->pad)
 		return -EINVAL;
 
 	switch (sel->target) {
 	case V4L2_SEL_TGT_CROP: {
-		struct imx29x *imx29x = to_imx29x(sd);
 		const struct v4l2_rect *crop;
 
-		crop = __imx29x_get_pad_crop(imx29x, sd_state, sel->pad,
-					     sel->which);
+		crop = v4l2_subdev_state_get_crop(sd_state, sel->pad);
 		if (!crop)
 			return -EINVAL;
 
@@ -2804,7 +2776,7 @@ static int imx29x_init_state(struct v4l2_subdev *sd,
 	const struct imx29x_mode *mode = imx29x_default_mode(imx29x);
 	struct v4l2_subdev_format fmt = {
 		.which = V4L2_SUBDEV_FORMAT_TRY,
-		.pad = IMAGE_PAD,
+		.pad = 0,
 		.format = {
 			.code = imx29x_default_format_code(imx29x),
 			.width = mode->width,
@@ -2815,7 +2787,7 @@ static int imx29x_init_state(struct v4l2_subdev *sd,
 
 	imx29x_set_pad_format(sd, state, &fmt);
 
-	crop = v4l2_subdev_state_get_crop(state, IMAGE_PAD);
+	crop = v4l2_subdev_state_get_crop(state, 0);
 	*crop = mode->crop;
 
 	return 0;
@@ -2868,7 +2840,7 @@ static int imx29x_init_controls(struct imx29x *imx29x)
 
 	/*
 	 * Create the controls here, but mode specific limits are setup
-	 * in the imx29x_set_framing_limits() call below.
+	 * in the imx29x_reset_framing_ctrls() call below.
 	 */
 	imx29x->link_freq = v4l2_ctrl_new_int_menu(ctrl_hdlr, &imx29x_ctrl_ops,
 						   V4L2_CID_LINK_FREQ,
@@ -2884,11 +2856,10 @@ static int imx29x_init_controls(struct imx29x *imx29x)
 					   V4L2_CID_VBLANK, 0, 0xfffff, 1, 0);
 	imx29x->hblank = v4l2_ctrl_new_std(ctrl_hdlr, &imx29x_ctrl_ops,
 					   V4L2_CID_HBLANK, 0, 0xffff, 1, 0);
-	imx29x->test_pattern =
-		v4l2_ctrl_new_std_menu_items(ctrl_hdlr, &imx29x_ctrl_ops,
-					     V4L2_CID_TEST_PATTERN,
-					     ARRAY_SIZE(imx29x_test_pattern_menu) - 1,
-					     0, 0, imx29x_test_pattern_menu);
+	v4l2_ctrl_new_std_menu_items(ctrl_hdlr, &imx29x_ctrl_ops,
+				     V4L2_CID_TEST_PATTERN,
+				     ARRAY_SIZE(imx29x_test_pattern_menu) - 1,
+				     0, 0, imx29x_test_pattern_menu);
 
 	imx29x->exposure = v4l2_ctrl_new_std(ctrl_hdlr, &imx29x_ctrl_ops,
 					     V4L2_CID_EXPOSURE,
@@ -2925,8 +2896,8 @@ static int imx29x_init_controls(struct imx29x *imx29x)
 	imx29x->sd.ctrl_handler = ctrl_hdlr;
 
 	/* Setup exposure and frame/line length limits. */
-	imx29x_set_framing_limits(imx29x, imx29x_default_mode(imx29x),
-				  imx29x_default_format_code(imx29x));
+	imx29x_reset_framing_ctrls(imx29x, imx29x_default_mode(imx29x),
+				   imx29x_default_format_code(imx29x));
 
 	return 0;
 
@@ -2987,8 +2958,7 @@ static int imx29x_probe(struct i2c_client *client)
 	if (!imx29x->compatible_data)
 		return -ENODEV;
 	imx29x->mono = imx29x->compatible_data->supports_mono &&
-		       (imx29x->compatible_data->mono ||
-		       of_property_read_bool(dev->of_node, "mono-mode"));
+		       of_property_read_bool(dev->of_node, "mono-mode");
 	imx29x->quad_bayer_modes =
 		imx29x->compatible_data->supports_quad_bayer_modes &&
 		of_property_read_bool(dev->of_node, "quad-bayer-modes");
@@ -3035,7 +3005,7 @@ static int imx29x_probe(struct i2c_client *client)
 		return ret;
 	}
 
-	/* Request optional enable pin */
+	/* Request optional XCLR/reset pin. */
 	imx29x->reset_gpio = devm_gpiod_get_optional(dev, "reset",
 						     GPIOD_OUT_HIGH);
 	if (IS_ERR(imx29x->reset_gpio))
@@ -3069,9 +3039,9 @@ static int imx29x_probe(struct i2c_client *client)
 	imx29x->sd.entity.function = MEDIA_ENT_F_CAM_SENSOR;
 
 	/* Initialize source pads */
-	imx29x->pad[IMAGE_PAD].flags = MEDIA_PAD_FL_SOURCE;
+	imx29x->pad.flags = MEDIA_PAD_FL_SOURCE;
 
-	ret = media_entity_pads_init(&imx29x->sd.entity, NUM_PADS, imx29x->pad);
+	ret = media_entity_pads_init(&imx29x->sd.entity, 1, &imx29x->pad);
 	if (ret) {
 		dev_err(dev, "failed to init entity pads: %d\n", ret);
 		goto error_handler_free;

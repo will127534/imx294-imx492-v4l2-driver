@@ -31,7 +31,9 @@ Non-standard or hardware-specific modes stay gated by dtoverlay properties:
   has no standard 4x4 quad-Bayer code.
 - `color-binned-modes` exposes the IMX492 color binned mode, which is useful
   for geometry/timing testing but is expected to collapse color information.
-- `mono-mode` exposes IMX492 Y10/Y12 formats for monochrome hardware or testing.
+- `mono` exposes IMX492 Y10/Y12 formats, and the mono 12-bit binned mode, for
+  monochrome hardware or testing. The overlay parameter maps to the driver's
+  `mono-mode` device-tree property.
 
 ## Install on Raspberry Pi 5
 
@@ -70,7 +72,8 @@ Common overlay options:
 - `always-on`: keep the camera regulator enabled for hardware debugging.
 - `quad-bayer-modes`: expose the IMX294 full-resolution quad-Bayer modes.
 - `color-binned-modes`: expose the IMX492 color-binned mode.
-- `mono`: expose IMX492 monochrome media-bus codes for mono hardware/testing.
+- `mono`: expose IMX492 monochrome media-bus codes and the mono 12-bit binned
+  mode; this sets the driver `mono-mode` property.
 
 Reboot after installation and check enumeration:
 
