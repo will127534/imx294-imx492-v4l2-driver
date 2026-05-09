@@ -57,7 +57,6 @@
 
 /* SHR internal */
 #define IMX29X_REG_SHR		0x302C
-#define IMX29X_SHR_MIN		12
 
 /* Exposure control */
 #define IMX29X_EXPOSURE_MIN			1
@@ -264,19 +263,19 @@ static const struct imx29x_reg imx29x_startup_pre_regs[] = {
 };
 
 static const struct imx29x_reg imx29x_startup_post_plrd_regs[] = {
-	{0x3000, 0x12},
+	{IMX29X_REG_MODE_SELECT, 0x12},
 	{0x310B, 0x00},
 };
 
 static const struct imx29x_reg imx29x_standby_release_regs[] = {
 	{0xFFFE, 0x0A},
-	{0x3000, 0x02},
+	{IMX29X_REG_MODE_SELECT, 0x02},
 	{0x35E5, 0x92},
 	{0x35E5, 0x9A},
 };
 
 static const struct imx29x_reg imx29x_stream_on_regs[] = {
-	{0x3000, 0x00},
+	{IMX29X_REG_MODE_SELECT, IMX29X_MODE_STREAMING},
 	{0xFFFE, 0x0A},
 	{0x3033, 0x20},
 	{0x3017, 0xA8},

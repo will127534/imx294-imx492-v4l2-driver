@@ -1,4 +1,4 @@
-# IMX294/IMX492 Shared Driver
+# IMX294/IMX492 Shared Raspberry Pi Driver
 
 This directory builds one kernel module, `imx294_imx492.ko`, from one shared
 V4L2 I2C sensor driver source: `imx294_imx492.c`.
@@ -13,7 +13,16 @@ streaming sequence policy behind the shared `imx29x` implementation. The common
 core owns register I/O, controls, format negotiation, stream start/stop,
 runtime PM, endpoint validation, and subdev registration.
 
-Non-standard modes stay gated by dtoverlay properties:
+## Features
+
+- Shared IMX294/IMX492 V4L2 sub-device driver.
+- DKMS install flow through `setup.sh`.
+- Device-tree overlays for both sensors: `imx294.dtbo` and `imx492.dtbo`.
+- Four-lane CSI-2 at `1728 Mbps/lane` with `link-frequencies = <864000000>`.
+- XCLK-dependent PLRD setup rows for `6`, `12`, `18`, and `24 MHz`.
+- Test-pattern, exposure, analogue-gain, blanking, and framerate controls.
+
+Non-standard or hardware-specific modes stay gated by dtoverlay properties:
 
 - `quad-bayer-modes` exposes the experimental IMX294 quad-Bayer full-resolution
   12-bit modes. These still use standard Bayer media-bus codes because Linux
@@ -41,7 +50,7 @@ chmod +x setup.sh
 
 The setup script copies the source to `/usr/src/imx294_imx492-0.0.1`, installs
 the module through DKMS, and builds and installs `imx294.dtbo` and
-`imx492.dtbo`.
+`imx492.dtbo`. It intentionally does not edit boot config.
 
 Edit `/boot/firmware/config.txt` on Bookworm/RPi5, or `/boot/config.txt` on
 older Raspberry Pi OS images. Disable camera autodetect and add the overlays
@@ -53,6 +62,14 @@ dtoverlay=imx492,cam0,color-binned-modes
 dtoverlay=imx294,quad-bayer-modes
 ```
 
+Common overlay options:
+
+- `cam0`: move that sensor overlay from CAM1 to CAM0.
+- `always-on`: keep the camera regulator enabled for hardware debugging.
+- `quad-bayer-modes`: expose the IMX294 full-resolution quad-Bayer modes.
+- `color-binned-modes`: expose the IMX492 color-binned mode.
+- `mono`: expose IMX492 monochrome media-bus codes for mono hardware/testing.
+
 Reboot after installation and check enumeration:
 
 ```bash
@@ -60,3 +77,19 @@ sudo reboot
 rpicam-hello --list-cameras
 dmesg | grep -E 'imx294|imx492|imx294_imx492'
 ```
+
+## Manual Build
+
+For quick local testing without DKMS:
+
+```bash
+make clean
+make
+dtc -Wno-interrupts_property -Wno-unit_address_vs_reg -@ \
+  -I dts -O dtb -o imx294.dtbo imx294-overlay.dts
+dtc -Wno-interrupts_property -Wno-unit_address_vs_reg -@ \
+  -I dts -O dtb -o imx492.dtbo imx492-overlay.dts
+```
+
+Install the resulting `.ko` and `.dtbo` files manually only if you need to
+test outside the DKMS flow.
