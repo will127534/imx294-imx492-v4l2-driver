@@ -32,7 +32,7 @@ Non-standard or hardware-specific modes stay gated by dtoverlay properties:
 - `color-binned-modes` exposes the IMX492 color binned mode, which is useful
   for geometry/timing testing but is expected to collapse color information.
 - `mono` exposes IMX492 Y10/Y12 formats, and the mono 12-bit binned mode, for
-  monochrome hardware or testing. The overlay parameter maps to the driver's
+  monochrome hardware. The overlay parameter maps to the driver's
   `mono-mode` device-tree property.
 
 ## Install on Raspberry Pi 5
