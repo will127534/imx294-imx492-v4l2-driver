@@ -26,7 +26,6 @@
 #define IMX29X_STREAM_DELAY_RANGE_US	1000
 #define IMX29X_AUTOSUSPEND_DELAY_MS	1000
 
-#define IMX29X_XCLK_FREQ		24000000
 #define IMX29X_LINK_RATE		1728000000ULL
 #define IMX29X_LINK_FREQ		(IMX29X_LINK_RATE / 2)
 #define IMX29X_NUM_DATA_LANES	4
@@ -81,6 +80,18 @@
 #define IMX29X_REG_BLKLEVEL		0x3042
 #define IMX29X_BLKLEVEL_DEFAULT		50
 
+#define IMX29X_REG_PLRD10		0x311F
+#define IMX29X_REG_PLRD2		0x3122
+#define IMX29X_REG_PLRD11		0x3123
+#define IMX29X_REG_PLRD12		0x3124
+#define IMX29X_REG_PLRD13		0x3125
+#define IMX29X_REG_PLRD14		0x3127
+#define IMX29X_REG_PLRD3		0x3129
+#define IMX29X_REG_PLRD4		0x312A
+#define IMX29X_REG_PLRD15		0x312D
+#define IMX29X_REG_PLRD1_LSB		0x31E8
+#define IMX29X_REG_PLRD1_MSB		0x31E9
+
 #define IMX29X_REG_TEST_PATTERN_CTRL	0x303A
 #define IMX29X_REG_TEST_PATTERN_SEL	0x303B
 #define IMX29X_TEST_PATTERN_ENABLE_MIPI	0x11
@@ -116,6 +127,84 @@ struct imx29x_reg {
 struct imx29x_reg_list {
 	unsigned int num_of_regs;
 	const struct imx29x_reg *regs;
+};
+
+struct imx29x_plrd_setup {
+	u32 xclk_freq;
+	struct imx29x_reg regs[11];
+};
+
+/*
+ * CSI-2 PLRD1..PLRD15 input-clock setup. The datasheets require these
+ * registers to be programmed according to the external INCK frequency before
+ * standby cancel. HMAX/VMAX timing remains expressed in 72 MHz converted
+ * clocks after the matching row is selected.
+ */
+static const struct imx29x_plrd_setup imx29x_plrd_setups[] = {
+	{
+		.xclk_freq = 6000000,
+		.regs = {
+			{IMX29X_REG_PLRD1_LSB, 0x20},
+			{IMX29X_REG_PLRD1_MSB, 0x01},
+			{IMX29X_REG_PLRD2, 0x00},
+			{IMX29X_REG_PLRD3, 0x90},
+			{IMX29X_REG_PLRD4, 0x00},
+			{IMX29X_REG_PLRD10, 0x00},
+			{IMX29X_REG_PLRD11, 0x00},
+			{IMX29X_REG_PLRD12, 0x00},
+			{IMX29X_REG_PLRD13, 0x01},
+			{IMX29X_REG_PLRD14, 0x02},
+			{IMX29X_REG_PLRD15, 0x02},
+		},
+	},
+	{
+		.xclk_freq = 12000000,
+		.regs = {
+			{IMX29X_REG_PLRD1_LSB, 0x20},
+			{IMX29X_REG_PLRD1_MSB, 0x01},
+			{IMX29X_REG_PLRD2, 0x01},
+			{IMX29X_REG_PLRD3, 0x90},
+			{IMX29X_REG_PLRD4, 0x01},
+			{IMX29X_REG_PLRD10, 0x00},
+			{IMX29X_REG_PLRD11, 0x00},
+			{IMX29X_REG_PLRD12, 0x00},
+			{IMX29X_REG_PLRD13, 0x01},
+			{IMX29X_REG_PLRD14, 0x02},
+			{IMX29X_REG_PLRD15, 0x02},
+		},
+	},
+	{
+		.xclk_freq = 18000000,
+		.regs = {
+			{IMX29X_REG_PLRD1_LSB, 0xC0},
+			{IMX29X_REG_PLRD1_MSB, 0x00},
+			{IMX29X_REG_PLRD2, 0x01},
+			{IMX29X_REG_PLRD3, 0x60},
+			{IMX29X_REG_PLRD4, 0x01},
+			{IMX29X_REG_PLRD10, 0x00},
+			{IMX29X_REG_PLRD11, 0x00},
+			{IMX29X_REG_PLRD12, 0x00},
+			{IMX29X_REG_PLRD13, 0x01},
+			{IMX29X_REG_PLRD14, 0x02},
+			{IMX29X_REG_PLRD15, 0x02},
+		},
+	},
+	{
+		.xclk_freq = 24000000,
+		.regs = {
+			{IMX29X_REG_PLRD1_LSB, 0x20},
+			{IMX29X_REG_PLRD1_MSB, 0x01},
+			{IMX29X_REG_PLRD2, 0x02},
+			{IMX29X_REG_PLRD3, 0x90},
+			{IMX29X_REG_PLRD4, 0x02},
+			{IMX29X_REG_PLRD10, 0x00},
+			{IMX29X_REG_PLRD11, 0x00},
+			{IMX29X_REG_PLRD12, 0x00},
+			{IMX29X_REG_PLRD13, 0x01},
+			{IMX29X_REG_PLRD14, 0x02},
+			{IMX29X_REG_PLRD15, 0x02},
+		},
+	},
 };
 
 /* Mode : resolution and related config&values */
@@ -172,6 +261,9 @@ struct imx29x_mode {
 static const struct imx29x_reg imx29x_startup_pre_regs[] = {
 	{0x3033, 0x30},
 	{0x303C, 0x01},
+};
+
+static const struct imx29x_reg imx29x_startup_post_plrd_regs[] = {
 	{0x3000, 0x12},
 	{0x310B, 0x00},
 };
@@ -193,21 +285,6 @@ static const struct imx29x_reg imx29x_stream_on_regs[] = {
 #include "imx29x_mode_tables.h"
 
 static const struct imx29x_reg imx294_common_regs[] = {
-	{0x3033, 0x30},
-	{0x303C, 0x01},
-
-	{0x31E8, 0x20}, /* PLRD1 */
-	{0x31E9, 0x01},
-
-	{0x3122, 0x02}, /* PLRD2 */
-	{0x3129, 0x90}, /* PLRD3 */
-	{0x312A, 0x02}, /* PLRD4 */
-	{0x311F, 0x00}, /* PLRD10 */
-	{0x3123, 0x00}, /* PLRD11 */
-	{0x3124, 0x00}, /* PLRD12 */
-	{0x3125, 0x01}, /* PLRD13 */
-	{0x3127, 0x02}, /* PLRD14 */
-	{0x312D, 0x02}, /* PLRD15 */
 	/* STANDBY = 0, STBLOGIC = 1h, STBMIPI = 0h, STBDV = 1h */
 	{0x3000, 0x12},
 	{0x310B, 0x00}, /* PLL release */
@@ -898,19 +975,6 @@ static const u32 imx294_color_codes[] = {
  * standby reliably on the colour IMX29X.
  */
 static const struct imx29x_reg imx492_binned_common_regs[] = {
-	{0x3033, 0x30},
-	{0x303C, 0x01},
-	{0x31E8, 0x20},
-	{0x31E9, 0x01},
-	{0x3122, 0x02},
-	{0x3129, 0x90},
-	{0x312A, 0x02},
-	{0x311F, 0x00},
-	{0x3123, 0x00},
-	{0x3124, 0x00},
-	{0x3125, 0x01},
-	{0x3127, 0x02},
-	{0x312D, 0x02},
 	{0x3000, 0x12},
 	{0x310B, 0x00},
 	{IMX29X_REG_BLKLEVEL, IMX29X_BLKLEVEL_DEFAULT},
@@ -1402,6 +1466,7 @@ struct imx29x {
 
 	struct clk *xclk;
 	u32 xclk_freq;
+	const struct imx29x_plrd_setup *plrd_setup;
 
 	struct gpio_desc *reset_gpio;
 	struct regulator_bulk_data supplies[IMX29X_NUM_SUPPLIES];
@@ -1676,6 +1741,12 @@ static int imx29x_write_regs(struct imx29x *imx29x,
 	}
 
 	return 0;
+}
+
+static int imx29x_write_plrd_regs(struct imx29x *imx29x)
+{
+	return imx29x_write_regs(imx29x, imx29x->plrd_setup->regs,
+				 ARRAY_SIZE(imx29x->plrd_setup->regs));
 }
 
 static u32 imx29x_default_format_code(const struct imx29x *imx29x, u32 code)
@@ -2316,6 +2387,21 @@ static int imx29x_start_streaming_output(struct imx29x *imx29x,
 		return ret;
 	}
 
+	ret = imx29x_write_plrd_regs(imx29x);
+	if (ret) {
+		dev_err(&client->dev, "%s failed to set PLRD\n", __func__);
+		return ret;
+	}
+
+	ret = imx29x_write_regs(imx29x, imx29x_startup_post_plrd_regs,
+				ARRAY_SIZE(imx29x_startup_post_plrd_regs));
+	if (ret) {
+		dev_err(&client->dev,
+			"%s failed to run startup post-PLRD sequence\n",
+			__func__);
+		return ret;
+	}
+
 	ret = imx29x_write_regs(imx29x, reg_list->regs, reg_list->num_of_regs);
 	if (ret) {
 		dev_err(&client->dev, "%s failed to set mode\n", __func__);
@@ -2348,6 +2434,21 @@ static int imx29x_start_streaming_binned(struct imx29x *imx29x,
 	struct i2c_client *client = v4l2_get_subdevdata(&imx29x->sd);
 	const struct imx29x_reg_list *reg_list = &mode->reg_list;
 	int ret;
+
+	ret = imx29x_write_regs(imx29x, imx29x_startup_pre_regs,
+				ARRAY_SIZE(imx29x_startup_pre_regs));
+	if (ret) {
+		dev_err(&client->dev,
+			"%s failed to run startup pre-sequence\n",
+			__func__);
+		return ret;
+	}
+
+	ret = imx29x_write_plrd_regs(imx29x);
+	if (ret) {
+		dev_err(&client->dev, "%s failed to set PLRD\n", __func__);
+		return ret;
+	}
 
 	ret = imx29x_write_regs(imx29x, data->binned_common_regs,
 				data->num_binned_common_regs);
@@ -2874,6 +2975,7 @@ static int imx29x_probe(struct i2c_client *client)
 {
 	struct device *dev = &client->dev;
 	struct imx29x *imx29x;
+	unsigned int i;
 	int ret;
 
 	imx29x = devm_kzalloc(&client->dev, sizeof(*imx29x), GFP_KERNEL);
@@ -2915,11 +3017,18 @@ static int imx29x_probe(struct i2c_client *client)
 	}
 
 	imx29x->xclk_freq = clk_get_rate(imx29x->xclk);
-	if (imx29x->xclk_freq != IMX29X_XCLK_FREQ) {
-		dev_err(dev, "xclk frequency not supported: %d Hz\n",
-			imx29x->xclk_freq);
-		return -EINVAL;
+	for (i = 0; i < ARRAY_SIZE(imx29x_plrd_setups); i++) {
+		if (imx29x_plrd_setups[i].xclk_freq == imx29x->xclk_freq) {
+			imx29x->plrd_setup = &imx29x_plrd_setups[i];
+			break;
+		}
 	}
+	if (!imx29x->plrd_setup)
+		return dev_err_probe(dev, -EINVAL,
+				     "unsupported XCLK %u Hz\n",
+				     imx29x->xclk_freq);
+
+	dev_info(dev, "XCLK %u Hz selected\n", imx29x->xclk_freq);
 
 	ret = imx29x_get_regulators(imx29x);
 	if (ret) {
