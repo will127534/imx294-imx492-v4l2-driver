@@ -1,0 +1,23 @@
+#!/bin/sh
+
+set -e
+
+cd "$(dirname "$0")"
+
+if [ -d /boot/firmware/overlays ]; then
+	overlay_dir=/boot/firmware/overlays
+elif [ -d /boot/overlays ]; then
+	overlay_dir=/boot/overlays
+else
+	overlay_dir=/boot/firmware/overlays
+fi
+
+mkdir -p "$overlay_dir"
+
+dtc -Wno-interrupts_property -Wno-unit_address_vs_reg -@ \
+	-I dts -O dtb -o imx294.dtbo imx294-overlay.dts
+dtc -Wno-interrupts_property -Wno-unit_address_vs_reg -@ \
+	-I dts -O dtb -o imx492.dtbo imx492-overlay.dts
+
+install -m 0644 imx294.dtbo "$overlay_dir/"
+install -m 0644 imx492.dtbo "$overlay_dir/"

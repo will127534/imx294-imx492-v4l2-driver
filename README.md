@@ -21,3 +21,42 @@ Non-standard modes stay gated by dtoverlay properties:
 - `color-binned-modes` exposes the IMX492 color binned mode, which is useful
   for geometry/timing testing but is expected to collapse color information.
 - `mono-mode` exposes IMX492 Y10/Y12 formats for monochrome hardware or testing.
+
+## Install on Raspberry Pi 5
+
+Install the build prerequisites once:
+
+```bash
+sudo apt update
+sudo apt install build-essential dkms device-tree-compiler raspberrypi-kernel-headers git
+```
+
+Clone or copy this repository to the Pi, then run:
+
+```bash
+cd imx294_imx492
+chmod +x setup.sh
+./setup.sh
+```
+
+The setup script copies the source to `/usr/src/imx294_imx492-0.0.1`, installs
+the module through DKMS, and builds and installs `imx294.dtbo` and
+`imx492.dtbo`.
+
+Edit `/boot/firmware/config.txt` on Bookworm/RPi5, or `/boot/config.txt` on
+older Raspberry Pi OS images. Disable camera autodetect and add the overlays
+for your wiring. The current bench uses IMX492 on CAM0 and IMX294 on CAM1:
+
+```ini
+camera_auto_detect=0
+dtoverlay=imx492,cam0,color-binned-modes
+dtoverlay=imx294,quad-bayer-modes
+```
+
+Reboot after installation and check enumeration:
+
+```bash
+sudo reboot
+rpicam-hello --list-cameras
+dmesg | grep -E 'imx294|imx492|imx294_imx492'
+```
