@@ -1288,6 +1288,18 @@ static inline struct imx29x *to_imx29x(struct v4l2_subdev *_sd)
 	return container_of(_sd, struct imx29x, sd);
 }
 
+static const char *imx29x_model_name(const struct imx29x *imx29x)
+{
+	switch (imx29x->compatible_data->model) {
+	case IMX29X_MODEL_IMX294:
+		return "imx294";
+	case IMX29X_MODEL_IMX492:
+		return "imx492";
+	}
+
+	return "imx29x";
+}
+
 static inline void imx29x_get_mode_table(struct imx29x *imx29x,
 					 unsigned int code,
 					 const struct imx29x_mode **mode_list,
@@ -2775,11 +2787,14 @@ static int imx29x_probe(struct i2c_client *client)
 	if (!imx29x)
 		return -ENOMEM;
 
-	v4l2_i2c_subdev_init(&imx29x->sd, client, &imx29x_subdev_ops);
-
 	imx29x->compatible_data = device_get_match_data(dev);
 	if (!imx29x->compatible_data)
 		return -ENODEV;
+
+	v4l2_i2c_subdev_init(&imx29x->sd, client, &imx29x_subdev_ops);
+	strscpy(imx29x->sd.name, imx29x_model_name(imx29x),
+		sizeof(imx29x->sd.name));
+
 	imx29x->mono = imx29x->compatible_data->supports_mono &&
 		       of_property_read_bool(dev->of_node, "mono-mode");
 	imx29x->quad_bayer_modes =
