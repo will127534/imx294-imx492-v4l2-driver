@@ -13,6 +13,12 @@ streaming sequence policy behind the shared `imx29x` implementation. The common
 core owns register I/O, controls, format negotiation, stream start/stop,
 runtime PM, endpoint validation, and subdev registration.
 
+Fun fact: The reason why we can do this is because essentially IMX294 = QuadBayer and IMX492 = Normal Bayer and both are the same silicon. So they not only share a lot of the code but you can run either one with the other drivers. That brings some fun to how to use it, see Non-standard or hardware-specific modes section for more details.  
+
+The code is mostly generated from my IMX294 and IMX492 driver with the help of codex and iterated on RPI5, but I do wanna say there is a catch - you need to enable RP1 overclock to enable the full potential of this sensor, additionally because RPI's CFE has a bug for 14bit and 16bit, it fixed it in the software so the 14bit mode may not reach the top speed and bottlenecked by the CPU speed.
+
+
+
 ## Features
 
 - Shared IMX294/IMX492 V4L2 sub-device driver.
