@@ -1666,11 +1666,29 @@ imx29x_state_get_mode(struct imx29x *imx29x, struct v4l2_subdev_state *state,
 		      u32 *code)
 {
 	struct v4l2_mbus_framefmt *fmt;
+	u32 fmt_code = imx29x_default_format_code(imx29x);
+
+	/*
+	 * Control ranges are initialised during probe before
+	 * v4l2_subdev_init_finalize() creates the active state. Use the default
+	 * mode for that pre-finalise path; streaming and format negotiation pass
+	 * a real state.
+	 */
+	if (!state) {
+		*code = fmt_code;
+		return imx29x_default_mode(imx29x);
+	}
 
 	fmt = v4l2_subdev_state_get_format(state, 0);
-	*code = imx29x_get_format_code(imx29x, fmt->code);
+	if (!fmt) {
+		*code = fmt_code;
+		return imx29x_default_mode(imx29x);
+	}
 
-	return imx29x_find_mode(imx29x, *code, fmt->width, fmt->height);
+	fmt_code = imx29x_get_format_code(imx29x, fmt->code);
+	*code = fmt_code;
+
+	return imx29x_find_mode(imx29x, fmt_code, fmt->width, fmt->height);
 }
 
 static const struct imx29x_mode *
