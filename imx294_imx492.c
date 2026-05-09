@@ -30,6 +30,7 @@
 #define IMX29X_LINK_RATE		1728000000ULL
 #define IMX29X_LINK_FREQ		(IMX29X_LINK_RATE / 2)
 #define IMX29X_NUM_DATA_LANES	4
+#define IMX29X_TIMING_CLOCK_HZ		72000000ULL
 
 /* VMAX internal VBLANK*/
 #define IMX29X_REG_VMAX		0x30A9
@@ -1537,7 +1538,7 @@ static u64 imx29x_get_mode_pixel_rate(struct imx29x *imx29x,
 	if (mode->use_output_overrides)
 		return imx29x_get_pixel_rate(imx29x->fmt_code);
 
-	pixel_rate = (u64)mode->width * 72000000 * mode->vmax_scale;
+	pixel_rate = (u64)mode->width * IMX29X_TIMING_CLOCK_HZ * mode->vmax_scale;
 	do_div(pixel_rate, mode->min_hmax);
 
 	return pixel_rate;
@@ -1548,7 +1549,7 @@ static u64 imx29x_hblank_from_hmax(struct imx29x *imx29x,
 				   u64 hmax)
 {
 	u64 line_length;
-	u64 denom = 72000000 * mode->vmax_scale;
+	u64 denom = IMX29X_TIMING_CLOCK_HZ * mode->vmax_scale;
 
 	line_length = DIV_ROUND_UP_ULL(hmax * imx29x_get_mode_pixel_rate(imx29x, mode),
 				       denom);
@@ -1563,8 +1564,8 @@ static u64 imx29x_hmax_from_hblank(struct imx29x *imx29x,
 				   const struct imx29x_mode *mode,
 				   u64 hblank)
 {
-	u64 hmax = (u64)(mode->width + hblank) * 72000000 *
-		   mode->vmax_scale;
+	u64 hmax = (u64)(mode->width + hblank) *
+		   IMX29X_TIMING_CLOCK_HZ * mode->vmax_scale;
 
 	do_div(hmax, imx29x_get_mode_pixel_rate(imx29x, mode));
 
@@ -1983,21 +1984,16 @@ static int imx29x_set_ctrl(struct v4l2_ctrl *ctrl)
 	case V4L2_CID_HBLANK:
 		dev_dbg(&client->dev, "V4L2_CID_HBLANK : %d\n", ctrl->val);
 		dev_dbg(&client->dev, "\tHMAX : %d\n", imx29x->hmax);
-		if (mode->use_output_overrides) {
-			ret = imx29x_write_reg_2byte(imx29x, IMX29X_REG_HMAX,
-						     imx29x->hmax);
-		} else {
-			ret = imx29x_write_reg_2byte(imx29x, IMX29X_REG_HMAX,
-						     imx29x->hmax);
-			if (ret)
-				break;
-			ret = imx29x_write_reg_2byte(imx29x, IMX29X_REG_HCOUNT1,
-						     imx29x->hmax);
-			if (ret)
-				break;
-			ret = imx29x_write_reg_2byte(imx29x, IMX29X_REG_HCOUNT2,
-						     imx29x->hmax);
-		}
+		ret = imx29x_write_reg_2byte(imx29x, IMX29X_REG_HMAX,
+					     imx29x->hmax);
+		if (ret)
+			break;
+		ret = imx29x_write_reg_2byte(imx29x, IMX29X_REG_HCOUNT1,
+					     imx29x->hmax);
+		if (ret)
+			break;
+		ret = imx29x_write_reg_2byte(imx29x, IMX29X_REG_HCOUNT2,
+					     imx29x->hmax);
 		break;
 	case V4L2_CID_TEST_PATTERN:
 		dev_dbg(&client->dev, "V4L2_CID_TEST_PATTERN : %d\n", ctrl->val);
@@ -2154,9 +2150,9 @@ static void imx29x_set_framing_limits(struct imx29x *imx29x,
 
 	__v4l2_ctrl_s_ctrl(imx29x->hblank, def_hblank);
 
-	/* Update limits and set FPS to default */
-	__v4l2_ctrl_modify_range(imx29x->vblank, min_vblank, max_vblank, 1,
-				 def_vblank);
+	/* Update limits and set FPS to default. */
+	__v4l2_ctrl_modify_range(imx29x->vblank, min_vblank, max_vblank,
+				 mode->vmax_scale, def_vblank);
 	__v4l2_ctrl_s_ctrl(imx29x->vblank, def_vblank);
 
 	/* Setting this will adjust the exposure limits as well. */
