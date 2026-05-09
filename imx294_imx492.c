@@ -2862,11 +2862,17 @@ static const struct imx29x_compatible_data imx492_compatible = {
 	.num_binned_common_regs = ARRAY_SIZE(imx492_binned_common_regs),
 };
 
-static const struct of_device_id imx29x_dt_ids[] = {
+static const struct of_device_id imx294_dt_ids[] = {
 	{ .compatible = "sony,imx294", .data = &imx294_compatible },
+	{ /* sentinel */ }
+};
+MODULE_DEVICE_TABLE(of, imx294_dt_ids);
+
+static const struct of_device_id imx492_dt_ids[] = {
 	{ .compatible = "sony,imx492", .data = &imx492_compatible },
 	{ /* sentinel */ }
 };
+MODULE_DEVICE_TABLE(of, imx492_dt_ids);
 
 static int imx29x_probe(struct i2c_client *client)
 {
@@ -3025,24 +3031,53 @@ static void imx29x_remove(struct i2c_client *client)
 	pm_runtime_set_suspended(&client->dev);
 }
 
-MODULE_DEVICE_TABLE(of, imx29x_dt_ids);
-
 static const struct dev_pm_ops imx29x_pm_ops = {
 	SYSTEM_SLEEP_PM_OPS(imx29x_suspend, imx29x_resume)
 	RUNTIME_PM_OPS(imx29x_power_off, imx29x_power_on, NULL)
 };
 
-static struct i2c_driver imx29x_i2c_driver = {
+static struct i2c_driver imx294_i2c_driver = {
 	.driver = {
-		.name = "imx29x",
-		.of_match_table	= imx29x_dt_ids,
+		.name = "imx294",
+		.of_match_table	= imx294_dt_ids,
 		.pm = pm_ptr(&imx29x_pm_ops),
 	},
 	.probe = imx29x_probe,
 	.remove = imx29x_remove,
 };
 
-module_i2c_driver(imx29x_i2c_driver);
+static struct i2c_driver imx492_i2c_driver = {
+	.driver = {
+		.name = "imx492",
+		.of_match_table	= imx492_dt_ids,
+		.pm = pm_ptr(&imx29x_pm_ops),
+	},
+	.probe = imx29x_probe,
+	.remove = imx29x_remove,
+};
+
+static int __init imx29x_init(void)
+{
+	int ret;
+
+	ret = i2c_add_driver(&imx294_i2c_driver);
+	if (ret)
+		return ret;
+
+	ret = i2c_add_driver(&imx492_i2c_driver);
+	if (ret)
+		i2c_del_driver(&imx294_i2c_driver);
+
+	return ret;
+}
+module_init(imx29x_init);
+
+static void __exit imx29x_exit(void)
+{
+	i2c_del_driver(&imx492_i2c_driver);
+	i2c_del_driver(&imx294_i2c_driver);
+}
+module_exit(imx29x_exit);
 
 MODULE_AUTHOR("Will Whang <will@willwhang.com>");
 MODULE_DESCRIPTION("Sony IMX294/IMX492 sensor driver");
