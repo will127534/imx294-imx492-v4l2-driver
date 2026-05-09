@@ -95,10 +95,8 @@
 #define IMX29X_REG_TEST_PATTERN_SEL	0x303B
 #define IMX29X_TEST_PATTERN_ENABLE_MIPI	0x11
 
-enum pad_types {
-	IMAGE_PAD,
-	NUM_PADS
-};
+#define IMAGE_PAD 0
+#define NUM_PADS 1
 
 /*
  * Native image payload and active/effective pixel array. The sensor can
