@@ -95,13 +95,8 @@
 #define IMX29X_REG_TEST_PATTERN_SEL	0x303B
 #define IMX29X_TEST_PATTERN_ENABLE_MIPI	0x11
 
-/* Embedded metadata stream structure */
-#define IMX29X_EMBEDDED_LINE_WIDTH 16384
-#define IMX29X_NUM_EMBEDDED_LINES 1
-
 enum pad_types {
 	IMAGE_PAD,
-	METADATA_PAD,
 	NUM_PADS
 };
 
@@ -1461,8 +1456,6 @@ struct imx29x {
 	struct v4l2_subdev sd;
 	struct media_pad pad[NUM_PADS];
 
-	unsigned int fmt_code;
-
 	struct clk *xclk;
 	u32 xclk_freq;
 	const struct imx29x_plrd_setup *plrd_setup;
@@ -1481,9 +1474,6 @@ struct imx29x {
 	struct v4l2_ctrl *hblank;
 	struct v4l2_ctrl *test_pattern;
 
-	/* Current mode */
-	const struct imx29x_mode *mode;
-
 	u16 hmax;
 	u32 vmax;
 	/*
@@ -1500,7 +1490,6 @@ struct imx29x {
 	bool mono;
 	bool quad_bayer_modes;
 	bool color_binned_modes;
-	bool active_state_initialized;
 };
 
 static inline struct imx29x *to_imx29x(struct v4l2_subdev *_sd)
@@ -1595,12 +1584,13 @@ static u64 imx29x_get_pixel_rate(u32 code)
 }
 
 static u64 imx29x_get_mode_pixel_rate(struct imx29x *imx29x,
-				      const struct imx29x_mode *mode)
+				      const struct imx29x_mode *mode,
+				      u32 code)
 {
 	u64 pixel_rate;
 
 	if (mode->use_output_overrides)
-		return imx29x_get_pixel_rate(imx29x->fmt_code);
+		return imx29x_get_pixel_rate(code);
 
 	pixel_rate = (u64)mode->width * IMX29X_TIMING_CLOCK_HZ * mode->vmax_scale;
 	do_div(pixel_rate, mode->min_hmax);
@@ -1610,12 +1600,13 @@ static u64 imx29x_get_mode_pixel_rate(struct imx29x *imx29x,
 
 static u64 imx29x_hblank_from_hmax(struct imx29x *imx29x,
 				   const struct imx29x_mode *mode,
-				   u64 hmax)
+				   u32 code, u64 hmax)
 {
 	u64 line_length;
 	u64 denom = IMX29X_TIMING_CLOCK_HZ * mode->vmax_scale;
 
-	line_length = DIV_ROUND_UP_ULL(hmax * imx29x_get_mode_pixel_rate(imx29x, mode),
+	line_length = DIV_ROUND_UP_ULL(hmax * imx29x_get_mode_pixel_rate(imx29x,
+									  mode, code),
 				       denom);
 
 	if (line_length <= mode->width)
@@ -1626,12 +1617,12 @@ static u64 imx29x_hblank_from_hmax(struct imx29x *imx29x,
 
 static u64 imx29x_hmax_from_hblank(struct imx29x *imx29x,
 				   const struct imx29x_mode *mode,
-				   u64 hblank)
+				   u32 code, u64 hblank)
 {
 	u64 hmax = (u64)(mode->width + hblank) *
 		   IMX29X_TIMING_CLOCK_HZ * mode->vmax_scale;
 
-	do_div(hmax, imx29x_get_mode_pixel_rate(imx29x, mode));
+	do_div(hmax, imx29x_get_mode_pixel_rate(imx29x, mode, code));
 
 	return hmax;
 }
@@ -1748,7 +1739,8 @@ static int imx29x_write_plrd_regs(struct imx29x *imx29x)
 				 ARRAY_SIZE(imx29x->plrd_setup->regs));
 }
 
-static u32 imx29x_default_format_code(const struct imx29x *imx29x, u32 code)
+static u32 imx29x_canonical_format_code(const struct imx29x *imx29x,
+					u32 code)
 {
 	u32 bpp = imx29x_get_format_bpp(code);
 
@@ -1795,30 +1787,33 @@ static u32 imx29x_get_format_code(struct imx29x *imx29x, u32 code)
 			if (imx492_mono_codes[i] == code)
 				return imx492_mono_codes[i];
 
-		return imx29x_default_format_code(imx29x, code);
+		return imx29x_canonical_format_code(imx29x, code);
 	}
 
 	for (i = 0; i < ARRAY_SIZE(imx492_color_codes); i++)
 		if (imx492_color_codes[i] == code)
 			return imx492_color_codes[i];
 
-	return imx29x_default_format_code(imx29x, code);
+	return imx29x_canonical_format_code(imx29x, code);
 }
 
-static void imx29x_set_default_format(struct imx29x *imx29x)
+static u32 imx29x_default_format_code(const struct imx29x *imx29x)
 {
-	if (imx29x->compatible_data->model == IMX29X_MODEL_IMX294) {
-		/* Set default mode to the first exposed 12-bit IMX294 mode. */
-		imx29x->mode = imx29x->quad_bayer_modes ?
-			       &imx294_modes_12bit[0] :
-			       &imx294_modes_12bit[IMX294_12BIT_QUAD_MODE_COUNT];
-		imx29x->fmt_code = MEDIA_BUS_FMT_SRGGB12_1X12;
-	} else {
-		/* Set default mode to max resolution. */
-		imx29x->mode = &imx492_modes_12bit[0];
-		imx29x->fmt_code = imx29x->mono ? MEDIA_BUS_FMT_Y12_1X12 :
-						    MEDIA_BUS_FMT_SRGGB12_1X12;
-	}
+	if (imx29x->compatible_data->model == IMX29X_MODEL_IMX294)
+		return MEDIA_BUS_FMT_SRGGB12_1X12;
+
+	return imx29x->mono ? MEDIA_BUS_FMT_Y12_1X12 :
+			      MEDIA_BUS_FMT_SRGGB12_1X12;
+}
+
+static const struct imx29x_mode *imx29x_default_mode(struct imx29x *imx29x)
+{
+	if (imx29x->compatible_data->model == IMX29X_MODEL_IMX294)
+		return imx29x->quad_bayer_modes ?
+		       &imx294_modes_12bit[0] :
+		       &imx294_modes_12bit[IMX294_12BIT_QUAD_MODE_COUNT];
+
+	return &imx492_modes_12bit[0];
 }
 
 static const struct imx29x_mode *
@@ -1830,32 +1825,44 @@ imx29x_find_mode(struct imx29x *imx29x, u32 code, u32 req_width,
 
 	get_mode_table(imx29x, code, &mode_list, &num_modes);
 	if (!mode_list || !num_modes)
-		return imx29x->mode;
+		return imx29x_default_mode(imx29x);
 
 	return v4l2_find_nearest_size(mode_list, num_modes, width, height,
 				      req_width, req_height);
 }
 
-static const struct imx29x_mode *imx29x_get_active_mode(struct imx29x *imx29x)
+static const struct imx29x_mode *
+imx29x_state_get_mode(struct imx29x *imx29x, struct v4l2_subdev_state *state,
+		      u32 *code)
 {
-	struct v4l2_subdev_state *state;
 	struct v4l2_mbus_framefmt *fmt;
+	u32 fmt_code = imx29x_default_format_code(imx29x);
 
-	if (!imx29x->active_state_initialized)
-		return imx29x->mode;
-
-	if (!mutex_is_locked(&imx29x->mutex))
-		return imx29x->mode;
-
-	state = v4l2_subdev_get_locked_active_state(&imx29x->sd);
-	if (!state)
-		return imx29x->mode;
+	if (!state) {
+		*code = fmt_code;
+		return imx29x_default_mode(imx29x);
+	}
 
 	fmt = v4l2_subdev_state_get_format(state, IMAGE_PAD);
-	if (!fmt)
-		return imx29x->mode;
+	if (!fmt) {
+		*code = fmt_code;
+		return imx29x_default_mode(imx29x);
+	}
 
-	return imx29x_find_mode(imx29x, fmt->code, fmt->width, fmt->height);
+	fmt_code = imx29x_get_format_code(imx29x, fmt->code);
+	*code = fmt_code;
+
+	return imx29x_find_mode(imx29x, fmt_code, fmt->width, fmt->height);
+}
+
+static const struct imx29x_mode *
+imx29x_get_active_mode(struct imx29x *imx29x, u32 *code)
+{
+	struct v4l2_subdev_state *state;
+
+	state = v4l2_subdev_get_locked_active_state(&imx29x->sd);
+
+	return imx29x_state_get_mode(imx29x, state, code);
 }
 
 static u64 calculate_v4l2_cid_exposure(u64 hmax, u64 vmax, u64 shr,
@@ -1980,7 +1987,9 @@ static int imx29x_set_ctrl(struct v4l2_ctrl *ctrl)
 	struct imx29x *imx29x =
 		container_of(ctrl->handler, struct imx29x, ctrl_handler);
 	struct i2c_client *client = v4l2_get_subdevdata(&imx29x->sd);
-	const struct imx29x_mode *mode = imx29x_get_active_mode(imx29x);
+	u32 fmt_code;
+	const struct imx29x_mode *mode = imx29x_get_active_mode(imx29x,
+								&fmt_code);
 	u64 shr, vblk, tmp;
 	int ret = 0;
 
@@ -1994,7 +2003,8 @@ static int imx29x_set_ctrl(struct v4l2_ctrl *ctrl)
 		imx29x->vmax = tmp;
 		imx29x_update_exposure_limits(imx29x, mode);
 	} else if (ctrl->id == V4L2_CID_HBLANK) {
-		imx29x->hmax = imx29x_hmax_from_hblank(imx29x, mode, ctrl->val);
+		imx29x->hmax = imx29x_hmax_from_hblank(imx29x, mode, fmt_code,
+						       ctrl->val);
 		imx29x_update_exposure_limits(imx29x, mode);
 	}
 
@@ -2069,6 +2079,9 @@ static int imx29x_set_ctrl(struct v4l2_ctrl *ctrl)
 		dev_dbg(&client->dev, "V4L2_CID_TEST_PATTERN : %d\n", ctrl->val);
 		ret = imx29x_set_test_pattern(imx29x, ctrl->val);
 		break;
+	case V4L2_CID_LINK_FREQ:
+	case V4L2_CID_PIXEL_RATE:
+		break;
 	default:
 		dev_err(&client->dev, "ctrl(id:0x%x,val:0x%x) is not handled\n",
 			ctrl->id, ctrl->val);
@@ -2092,31 +2105,24 @@ static int imx29x_enum_mbus_code(struct v4l2_subdev *sd,
 {
 	struct imx29x *imx29x = to_imx29x(sd);
 
-	if (code->pad >= NUM_PADS)
+	if (code->pad != IMAGE_PAD)
 		return -EINVAL;
 
-	if (code->pad == IMAGE_PAD) {
-		if (imx29x->compatible_data->model == IMX29X_MODEL_IMX294) {
-			if (code->index >= ARRAY_SIZE(imx294_color_codes))
-				return -EINVAL;
-
-			code->code = imx294_color_codes[code->index];
-		} else if (imx29x->mono) {
-			if (code->index >= ARRAY_SIZE(imx492_mono_codes))
-				return -EINVAL;
-
-			code->code = imx492_mono_codes[code->index];
-		} else {
-			if (code->index >= ARRAY_SIZE(imx492_color_codes))
-				return -EINVAL;
-
-			code->code = imx492_color_codes[code->index];
-		}
-	} else {
-		if (code->index > 0)
+	if (imx29x->compatible_data->model == IMX29X_MODEL_IMX294) {
+		if (code->index >= ARRAY_SIZE(imx294_color_codes))
 			return -EINVAL;
 
-		code->code = MEDIA_BUS_FMT_SENSOR_DATA;
+		code->code = imx294_color_codes[code->index];
+	} else if (imx29x->mono) {
+		if (code->index >= ARRAY_SIZE(imx492_mono_codes))
+			return -EINVAL;
+
+		code->code = imx492_mono_codes[code->index];
+	} else {
+		if (code->index >= ARRAY_SIZE(imx492_color_codes))
+			return -EINVAL;
+
+		code->code = imx492_color_codes[code->index];
 	}
 
 	return 0;
@@ -2128,34 +2134,24 @@ static int imx29x_enum_frame_size(struct v4l2_subdev *sd,
 {
 	struct imx29x *imx29x = to_imx29x(sd);
 
-	if (fse->pad >= NUM_PADS)
+	if (fse->pad != IMAGE_PAD)
 		return -EINVAL;
 
-	if (fse->pad == IMAGE_PAD) {
-		const struct imx29x_mode *mode_list;
-		unsigned int num_modes;
+	const struct imx29x_mode *mode_list;
+	unsigned int num_modes;
 
-		get_mode_table(imx29x, fse->code, &mode_list, &num_modes);
+	get_mode_table(imx29x, fse->code, &mode_list, &num_modes);
 
-		if (fse->index >= num_modes)
-			return -EINVAL;
+	if (fse->index >= num_modes)
+		return -EINVAL;
 
-		if (fse->code != imx29x_get_format_code(imx29x, fse->code))
-			return -EINVAL;
+	if (fse->code != imx29x_get_format_code(imx29x, fse->code))
+		return -EINVAL;
 
-		fse->min_width = mode_list[fse->index].width;
-		fse->max_width = fse->min_width;
-		fse->min_height = mode_list[fse->index].height;
-		fse->max_height = fse->min_height;
-	} else {
-		if (fse->code != MEDIA_BUS_FMT_SENSOR_DATA || fse->index > 0)
-			return -EINVAL;
-
-		fse->min_width = IMX29X_EMBEDDED_LINE_WIDTH;
-		fse->max_width = fse->min_width;
-		fse->min_height = IMX29X_NUM_EMBEDDED_LINES;
-		fse->max_height = fse->min_height;
-	}
+	fse->min_width = mode_list[fse->index].width;
+	fse->max_width = fse->min_width;
+	fse->min_height = mode_list[fse->index].height;
+	fse->max_height = fse->min_height;
 
 	return 0;
 }
@@ -2180,17 +2176,10 @@ static void imx29x_update_image_pad_format(struct imx29x *imx29x,
 	imx29x_reset_colorspace(&fmt->format);
 }
 
-static void imx29x_update_metadata_pad_format(struct v4l2_subdev_format *fmt)
-{
-	fmt->format.width = IMX29X_EMBEDDED_LINE_WIDTH;
-	fmt->format.height = IMX29X_NUM_EMBEDDED_LINES;
-	fmt->format.code = MEDIA_BUS_FMT_SENSOR_DATA;
-	fmt->format.field = V4L2_FIELD_NONE;
-}
-
 /* Update timing-dependent control ranges for the selected image mode. */
 static void imx29x_set_framing_limits(struct imx29x *imx29x,
-				      const struct imx29x_mode *mode)
+				      const struct imx29x_mode *mode,
+				      u32 code)
 {
 	struct i2c_client *client = v4l2_get_subdevdata(&imx29x->sd);
 	u64 def_hblank;
@@ -2199,18 +2188,20 @@ static void imx29x_set_framing_limits(struct imx29x *imx29x,
 	u64 max_vblank;
 	u64 min_hblank;
 	u64 min_vblank;
-	u64 pixel_rate = imx29x_get_mode_pixel_rate(imx29x, mode);
+	u64 pixel_rate = imx29x_get_mode_pixel_rate(imx29x, mode, code);
 
-	imx29x->mode = mode;
 	imx29x->vmax = mode->default_vmax;
 	imx29x->hmax = mode->default_hmax;
 	imx29x_update_exposure_limits(imx29x, mode);
 
 	dev_dbg(&client->dev, "Pixel Rate : %lld\n", pixel_rate);
 
-	min_hblank = imx29x_hblank_from_hmax(imx29x, mode, mode->min_hmax);
-	def_hblank = imx29x_hblank_from_hmax(imx29x, mode, mode->default_hmax);
-	max_hblank = imx29x_hblank_from_hmax(imx29x, mode, IMX29X_HMAX_MAX);
+	min_hblank = imx29x_hblank_from_hmax(imx29x, mode, code,
+					     mode->min_hmax);
+	def_hblank = imx29x_hblank_from_hmax(imx29x, mode, code,
+					     mode->default_hmax);
+	max_hblank = imx29x_hblank_from_hmax(imx29x, mode, code,
+					     IMX29X_HMAX_MAX);
 	min_vblank = mode->min_vmax * mode->vmax_scale - mode->height;
 	max_vblank = IMX29X_VMAX_MAX * mode->vmax_scale - mode->height;
 	def_vblank = mode->default_vmax * mode->vmax_scale - mode->height;
@@ -2243,45 +2234,39 @@ static int imx29x_set_pad_format(struct v4l2_subdev *sd,
 	struct v4l2_mbus_framefmt *framefmt;
 	struct v4l2_rect *crop;
 	const struct imx29x_mode *mode;
+	const struct imx29x_mode *mode_list;
 	struct imx29x *imx29x = to_imx29x(sd);
+	unsigned int num_modes;
+	bool update_controls = false;
 
-	if (fmt->pad >= NUM_PADS)
+	if (fmt->pad != IMAGE_PAD)
 		return -EINVAL;
 
-	if (fmt->pad == IMAGE_PAD) {
-		const struct imx29x_mode *mode_list;
-		unsigned int num_modes;
+	/* Alternate Bayer orders are canonicalized to fixed native CFA. */
+	fmt->format.code = imx29x_get_format_code(imx29x, fmt->format.code);
 
-		/* Alternate Bayer orders are canonicalized to fixed native CFA. */
-		fmt->format.code = imx29x_get_format_code(imx29x,
-							  fmt->format.code);
+	get_mode_table(imx29x, fmt->format.code, &mode_list, &num_modes);
 
-		get_mode_table(imx29x, fmt->format.code, &mode_list, &num_modes);
+	mode = v4l2_find_nearest_size(mode_list,
+				      num_modes,
+				      width, height,
+				      fmt->format.width,
+				      fmt->format.height);
+	imx29x_update_image_pad_format(imx29x, mode, fmt);
+	framefmt = v4l2_subdev_state_get_format(sd_state, fmt->pad);
 
-		mode = v4l2_find_nearest_size(mode_list,
-					      num_modes,
-					      width, height,
-					      fmt->format.width,
-					      fmt->format.height);
-		imx29x_update_image_pad_format(imx29x, mode, fmt);
-		framefmt = v4l2_subdev_state_get_format(sd_state, fmt->pad);
-		*framefmt = fmt->format;
+	update_controls = fmt->which == V4L2_SUBDEV_FORMAT_ACTIVE &&
+			  (framefmt->code != fmt->format.code ||
+			   framefmt->width != fmt->format.width ||
+			   framefmt->height != fmt->format.height);
 
-		crop = v4l2_subdev_state_get_crop(sd_state, IMAGE_PAD);
-		*crop = mode->crop;
+	*framefmt = fmt->format;
 
-		if (fmt->which == V4L2_SUBDEV_FORMAT_ACTIVE &&
-		    (imx29x->mode != mode ||
-		     imx29x->fmt_code != fmt->format.code)) {
-			imx29x->fmt_code = fmt->format.code;
-			imx29x_set_framing_limits(imx29x, mode);
-		}
-	} else {
-		/* Only one embedded data mode is supported. */
-		imx29x_update_metadata_pad_format(fmt);
-		framefmt = v4l2_subdev_state_get_format(sd_state, fmt->pad);
-		*framefmt = fmt->format;
-	}
+	crop = v4l2_subdev_state_get_crop(sd_state, IMAGE_PAD);
+	*crop = mode->crop;
+
+	if (update_controls)
+		imx29x_set_framing_limits(imx29x, mode, fmt->format.code);
 
 	return 0;
 }
@@ -2292,14 +2277,7 @@ __imx29x_get_pad_crop(struct imx29x *imx29x,
 		      struct v4l2_subdev_state *sd_state,
 		      unsigned int pad, enum v4l2_subdev_format_whence which)
 {
-	switch (which) {
-	case V4L2_SUBDEV_FORMAT_TRY:
-		return v4l2_subdev_state_get_crop(sd_state, pad);
-	case V4L2_SUBDEV_FORMAT_ACTIVE:
-		return v4l2_subdev_state_get_crop(sd_state, pad);
-	}
-
-	return NULL;
+	return v4l2_subdev_state_get_crop(sd_state, pad);
 }
 
 static int imx29x_apply_output_overrides(struct imx29x *imx29x,
@@ -2479,16 +2457,30 @@ static int imx29x_start_streaming_binned(struct imx29x *imx29x,
 }
 
 /* Start streaming */
-static int imx29x_start_streaming(struct imx29x *imx29x)
+static int imx29x_start_streaming(struct imx29x *imx29x,
+				  struct v4l2_subdev_state *state)
 {
-	const struct imx29x_mode *mode = imx29x_get_active_mode(imx29x);
+	struct v4l2_subdev_state *locked_state = NULL;
+	const struct imx29x_mode *mode;
+	u32 fmt_code;
+	int ret;
 
-	imx29x->mode = mode;
+	if (!state) {
+		locked_state = v4l2_subdev_lock_and_get_active_state(&imx29x->sd);
+		state = locked_state;
+	}
+
+	mode = imx29x_state_get_mode(imx29x, state, &fmt_code);
 
 	if (mode->use_output_overrides)
-		return imx29x_start_streaming_output(imx29x, mode);
+		ret = imx29x_start_streaming_output(imx29x, mode);
+	else
+		ret = imx29x_start_streaming_binned(imx29x, mode);
 
-	return imx29x_start_streaming_binned(imx29x, mode);
+	if (locked_state)
+		v4l2_subdev_unlock_state(locked_state);
+
+	return ret;
 }
 
 /* Stop streaming */
@@ -2512,8 +2504,7 @@ static int imx29x_enable_streams(struct v4l2_subdev *sd,
 	struct i2c_client *client = v4l2_get_subdevdata(sd);
 	int ret = 0;
 
-	if ((pad != IMAGE_PAD && pad != METADATA_PAD) ||
-	    streams_mask != BIT_ULL(0))
+	if (pad != IMAGE_PAD || streams_mask != BIT_ULL(0))
 		return -EINVAL;
 
 	if (v4l2_subdev_is_streaming(sd))
@@ -2527,7 +2518,7 @@ static int imx29x_enable_streams(struct v4l2_subdev *sd,
 	 * Apply default & customized values
 	 * and then start streaming.
 	 */
-	ret = imx29x_start_streaming(imx29x);
+	ret = imx29x_start_streaming(imx29x, state);
 	if (ret)
 		goto err_rpm_put;
 
@@ -2549,8 +2540,7 @@ static int imx29x_disable_streams(struct v4l2_subdev *sd,
 	struct imx29x *imx29x = to_imx29x(sd);
 	struct i2c_client *client = v4l2_get_subdevdata(sd);
 
-	if ((pad != IMAGE_PAD && pad != METADATA_PAD) ||
-	    streams_mask != BIT_ULL(0))
+	if (pad != IMAGE_PAD || streams_mask != BIT_ULL(0))
 		return -EINVAL;
 
 	if (sd->enabled_pads & ~BIT_ULL(pad))
@@ -2644,7 +2634,7 @@ static int imx29x_resume(struct device *dev)
 	int ret;
 
 	if (imx29x->streaming) {
-		ret = imx29x_start_streaming(imx29x);
+		ret = imx29x_start_streaming(imx29x, NULL);
 		if (ret)
 			goto error;
 	}
@@ -2795,26 +2785,19 @@ static int imx29x_init_state(struct v4l2_subdev *sd,
 			     struct v4l2_subdev_state *state)
 {
 	struct imx29x *imx29x = to_imx29x(sd);
-	const struct imx29x_mode *mode = imx29x->mode;
+	const struct imx29x_mode *mode = imx29x_default_mode(imx29x);
 	struct v4l2_subdev_format fmt = {
 		.which = V4L2_SUBDEV_FORMAT_TRY,
 		.pad = IMAGE_PAD,
 		.format = {
-			.code = imx29x->fmt_code,
+			.code = imx29x_default_format_code(imx29x),
 			.width = mode->width,
 			.height = mode->height,
 		},
 	};
-	struct v4l2_mbus_framefmt *meta_fmt;
 	struct v4l2_rect *crop;
 
 	imx29x_set_pad_format(sd, state, &fmt);
-
-	meta_fmt = v4l2_subdev_state_get_format(state, METADATA_PAD);
-	meta_fmt->width = IMX29X_EMBEDDED_LINE_WIDTH;
-	meta_fmt->height = IMX29X_NUM_EMBEDDED_LINES;
-	meta_fmt->code = MEDIA_BUS_FMT_SENSOR_DATA;
-	meta_fmt->field = V4L2_FIELD_NONE;
 
 	crop = v4l2_subdev_state_get_crop(state, IMAGE_PAD);
 	*crop = mode->crop;
@@ -2926,7 +2909,8 @@ static int imx29x_init_controls(struct imx29x *imx29x)
 	imx29x->sd.ctrl_handler = ctrl_hdlr;
 
 	/* Setup exposure and frame/line length limits. */
-	imx29x_set_framing_limits(imx29x, imx29x->mode);
+	imx29x_set_framing_limits(imx29x, imx29x_default_mode(imx29x),
+				  imx29x_default_format_code(imx29x));
 
 	return 0;
 
@@ -3050,9 +3034,6 @@ static int imx29x_probe(struct i2c_client *client)
 	if (ret)
 		goto error_power_off;
 
-	/* Initialize default format */
-	imx29x_set_default_format(imx29x);
-
 	/* Enable runtime PM and let autosuspend turn the device off when idle. */
 	pm_runtime_set_active(dev);
 	pm_runtime_get_noresume(dev);
@@ -3073,7 +3054,6 @@ static int imx29x_probe(struct i2c_client *client)
 
 	/* Initialize source pads */
 	imx29x->pad[IMAGE_PAD].flags = MEDIA_PAD_FL_SOURCE;
-	imx29x->pad[METADATA_PAD].flags = MEDIA_PAD_FL_SOURCE;
 
 	ret = media_entity_pads_init(&imx29x->sd.entity, NUM_PADS, imx29x->pad);
 	if (ret) {
@@ -3087,7 +3067,6 @@ static int imx29x_probe(struct i2c_client *client)
 		dev_err(dev, "failed to initialize subdev state: %d\n", ret);
 		goto error_media_entity;
 	}
-	imx29x->active_state_initialized = true;
 
 	ret = v4l2_async_register_subdev_sensor(&imx29x->sd);
 	if (ret < 0) {
@@ -3101,7 +3080,6 @@ static int imx29x_probe(struct i2c_client *client)
 	return 0;
 
 error_subdev_cleanup:
-	imx29x->active_state_initialized = false;
 	v4l2_subdev_cleanup(&imx29x->sd);
 
 error_media_entity:
@@ -3124,7 +3102,6 @@ static void imx29x_remove(struct i2c_client *client)
 	struct imx29x *imx29x = to_imx29x(sd);
 
 	v4l2_async_unregister_subdev(sd);
-	imx29x->active_state_initialized = false;
 	v4l2_subdev_cleanup(sd);
 	media_entity_cleanup(&sd->entity);
 	imx29x_free_controls(imx29x);

@@ -16,6 +16,8 @@ runtime PM, endpoint validation, and subdev registration.
 ## Features
 
 - Shared IMX294/IMX492 V4L2 sub-device driver.
+- Single image source pad; no embedded metadata pad is advertised.
+- Mode selection is derived from the V4L2 subdev active state.
 - DKMS install flow through `setup.sh`.
 - Device-tree overlays for both sensors: `imx294.dtbo` and `imx492.dtbo`.
 - Four-lane CSI-2 at `1728 Mbps/lane` with `link-frequencies = <864000000>`.

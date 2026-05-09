@@ -2,6 +2,8 @@
 
 set -euo pipefail
 
+PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH"
+
 DRV_NAME=imx294_imx492
 DRV_VERSION=0.0.1
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
