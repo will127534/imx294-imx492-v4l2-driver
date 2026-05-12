@@ -33,7 +33,12 @@ Non-standard or hardware-specific modes stay gated by dtoverlay properties:
 
 - `quad-bayer-modes` exposes the experimental IMX294 quad-Bayer full-resolution
   12-bit modes. These still use standard Bayer media-bus codes because Linux
-  has no standard 4x4 quad-Bayer code.
+  has no standard 4x4 quad-Bayer code. The driver advertises QBC modes to
+  userspace via the read-only/volatile V4L2 control
+  `V4L2_CID_USER_QUADBAYER_MODE` (`V4L2_CID_USER_BASE + 0x10b8`) — libcamera's
+  pisp pipeline handler reads it at configure time to engage the in-place
+  block-average remosaic + SW stats producer for those modes (see the
+  `qbc-pisp-handler` branch in the project's libcamera fork).
 - `color-binned-modes` exposes the IMX492 color binned mode, which is useful
   for geometry/timing testing but is expected to collapse color information.
 - `mono` exposes IMX492 Y10/Y12 formats, and the mono 12-bit binned mode, for

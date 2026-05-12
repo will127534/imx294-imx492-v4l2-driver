@@ -249,6 +249,9 @@ struct imx29x_mode {
 	u8 opb_size_v;
 	u16 write_vsize;
 	u16 y_out_size;
+
+	/* True for sensor modes that emit a 4x4 macro CFA (Quad Bayer). */
+	bool is_qbc;
 };
 
 static const struct imx29x_reg imx29x_startup_pre_regs[] = {
@@ -808,9 +811,13 @@ static const struct imx29x_mode imx294_modes_12bit[] = {
 			.regs = imx294_quad_all_pixel_12bit_regs,
 		},
 		.use_output_overrides = true,
-		.opb_size_v = 0x20,
+		/* OPB bumped by 2 lines so the CFE-delivered active region starts on
+		 * a 4-row Quad Bayer macro boundary (otherwise libcamera sees a
+		 * GG/GG row pair where it expects RR/RR — phase shifted by 2). */
+		.opb_size_v = 0x22,
 		.write_vsize = 0x1630,
-		.y_out_size = 0x1610,
+		.y_out_size = 0x160E,
+		.is_qbc = true,
 	}, {
 		/* Quad Bayer 17:9 12-bit mode */
 		.width = 8432,
@@ -834,9 +841,10 @@ static const struct imx29x_mode imx294_modes_12bit[] = {
 			.regs = imx294_quad_wide_17_9_12bit_regs,
 		},
 		.use_output_overrides = true,
-		.opb_size_v = 0x20,
+		.opb_size_v = 0x22,
 		.write_vsize = 0x111c,
-		.y_out_size = 0x10fc,
+		.y_out_size = 0x10FA,
+		.is_qbc = true,
 	}, {
 		/* Quad Bayer 4:3 12-bit mode */
 		.width = 7680,
@@ -860,9 +868,10 @@ static const struct imx29x_mode imx294_modes_12bit[] = {
 			.regs = imx294_quad_four_three_12bit_regs,
 		},
 		.use_output_overrides = true,
-		.opb_size_v = 0x20,
+		.opb_size_v = 0x22,
 		.write_vsize = 0x1630,
-		.y_out_size = 0x1610,
+		.y_out_size = 0x160E,
+		.is_qbc = true,
 	},
 	{
 		/* 4096 x 2160 readout mode 1, trimmed to active output lines */
@@ -1946,8 +1955,39 @@ static int imx29x_set_ctrl(struct v4l2_ctrl *ctrl)
 	return ret;
 }
 
+/* Out-of-tree CID inside V4L2_CID_USER_IMX_BASE; allocate in v4l2-controls.h if upstreaming. */
+#define V4L2_CID_USER_QUADBAYER_MODE	(V4L2_CID_USER_BASE + 0x10b8)
+
+static int imx29x_g_volatile_ctrl(struct v4l2_ctrl *ctrl)
+{
+	struct imx29x *imx29x =
+		container_of(ctrl->handler, struct imx29x, ctrl_handler);
+	const struct imx29x_mode *mode;
+	u32 code;
+
+	if (ctrl->id != V4L2_CID_USER_QUADBAYER_MODE)
+		return -EINVAL;
+
+	mode = imx29x_get_active_mode(imx29x, &code);
+	ctrl->val = (mode && mode->is_qbc) ? 1 : 0;
+	return 0;
+}
+
 static const struct v4l2_ctrl_ops imx29x_ctrl_ops = {
 	.s_ctrl = imx29x_set_ctrl,
+	.g_volatile_ctrl = imx29x_g_volatile_ctrl,
+};
+
+static const struct v4l2_ctrl_config imx29x_ctrl_qbc = {
+	.ops = &imx29x_ctrl_ops,
+	.id = V4L2_CID_USER_QUADBAYER_MODE,
+	.name = "Quad Bayer Mode",
+	.type = V4L2_CTRL_TYPE_BOOLEAN,
+	.min = 0,
+	.max = 1,
+	.step = 1,
+	.def = 0,
+	.flags = V4L2_CTRL_FLAG_READ_ONLY | V4L2_CTRL_FLAG_VOLATILE,
 };
 
 static int imx29x_enum_mbus_code(struct v4l2_subdev *sd,
@@ -2714,6 +2754,8 @@ static int imx29x_init_controls(struct imx29x *imx29x)
 	v4l2_ctrl_new_std(ctrl_hdlr, &imx29x_ctrl_ops, V4L2_CID_ANALOGUE_GAIN,
 			  IMX29X_ANA_GAIN_MIN, IMX29X_ANA_GAIN_MAX,
 			  IMX29X_ANA_GAIN_STEP, IMX29X_ANA_GAIN_DEFAULT);
+
+	v4l2_ctrl_new_custom(ctrl_hdlr, &imx29x_ctrl_qbc, NULL);
 
 	if (imx29x->link_freq)
 		imx29x->link_freq->flags |= V4L2_CTRL_FLAG_READ_ONLY;
