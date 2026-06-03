@@ -2472,11 +2472,22 @@ static void imx29x_stop_streaming(struct imx29x *imx29x)
 	struct i2c_client *client = v4l2_get_subdevdata(&imx29x->sd);
 	int ret;
 
-	/* set stream off register */
-	ret = imx29x_write_reg_1byte(imx29x, IMX29X_REG_MODE_SELECT,
-				     IMX29X_MODE_STANDBY);
+	/*
+	 * Datasheet standby-ENTRY: master mode stop (XMSTA=1) BEFORE standby. The
+	 * previous code wrote only STANDBY=1 with the master still running, leaving
+	 * the sensor in an unclean state; on this board nothing truly resets it
+	 * (always-on rails, module-generated clock, XCLR not wired), so that state
+	 * persists and the next standby-cancel intermittently fails to restart the
+	 * sensor -> no frames -> CFE dequeue timeout -> stuck capture.
+	 */
+	ret = imx29x_write_reg_1byte(imx29x, 0x3033, 0x30); /* XMSTA = 1: master stop */
 	if (ret)
-		dev_err(&client->dev, "%s failed to set stream\n", __func__);
+		dev_err(&client->dev, "%s failed to stop master mode\n", __func__);
+
+	ret = imx29x_write_reg_1byte(imx29x, IMX29X_REG_MODE_SELECT,
+				     IMX29X_MODE_STANDBY); /* STANDBY = 1 */
+	if (ret)
+		dev_err(&client->dev, "%s failed to enter standby\n", __func__);
 }
 
 static int imx29x_enable_streams(struct v4l2_subdev *sd,
