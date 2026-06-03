@@ -1,7 +1,16 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * A V4L2 driver for Sony imx29x cameras.
+ * A V4L2 driver for Sony IMX294 and IMX492 cameras.
  *
+ * The IMX294 (Quad-Bayer CFA) and IMX492 (normal-Bayer CFA) are the same base
+ * silicon, so this is a single driver for both. Per-sensor differences (mono
+ * support, Quad-Bayer modes, colour-binned modes, black-level seeding) are
+ * selected at probe via struct imx29x_compatible_data, not by branching.
+ *
+ * Naming convention:
+ *   imx29x_*  - register sequences / helpers common to both sensors
+ *   imx294_*  - IMX294-only tables (imx294_quad_* = Quad-Bayer readout)
+ *   imx492_*  - IMX492-only tables (full-resolution normal-Bayer readout)
  */
 #include <linux/clk.h>
 #include <linux/delay.h>
@@ -278,20 +287,21 @@ static const struct imx29x_reg imx29x_stream_on_regs[] = {
 	{0x3017, 0xA8},
 };
 
-#include "imx29x_mode_tables.h"
+#include "imx492_mode_tables.h"
 
 /*
- * IMX294-style binned/native readout startup sequence.
- *
- * This table contains the datasheet PLL/MIPI timing and mode-independent
- * readout setup shared by the native IMX294 modes and the IMX492 12-bit binned
- * mode.  IMX492 inserts one black-level seed after the first two writes through
- * imx29x_write_binned_common_regs().  The timing registers near the end are
- * startup seeds only: the active V4L2 exposure, VBLANK, and HBLANK controls
- * rewrite SHR, VMAX, HMAX, HCOUNT1, HCOUNT2, and PSSLVS before the sensor
- * leaves standby for streaming.
+ * Common init for the binned/native readout path, shared by the IMX294 binned
+ * (NQ) modes and the IMX492 binned mode (written by
+ * imx29x_write_binned_common_regs(); output-override/full-res modes don't use
+ * it). Datasheet PLL/MIPI timing plus mode-independent readout setup. IMX492
+ * inserts one black-level seed after the first two writes. The timing registers
+ * mid-list are startup seeds only: the active V4L2 exposure/VBLANK/HBLANK
+ * controls rewrite SHR, VMAX, HMAX, HCOUNT1, HCOUNT2 and PSSLVS before the
+ * sensor leaves standby. The tail restores the readout-area registers a prior
+ * Quad-Bayer capture would otherwise leave set (the QBC->NQ carryover; see the
+ * inline comment on that block).
  */
-static const struct imx29x_reg imx294_common_regs[] = {
+static const struct imx29x_reg imx29x_common_regs[] = {
 	/* STANDBY = 0, STBLOGIC = 1h, STBMIPI = 0h, STBDV = 1h */
 	{0x3000, 0x12},
 	{0x310B, 0x00}, /* PLL release */
@@ -506,6 +516,106 @@ static const struct imx29x_reg imx294_common_regs[] = {
 	{IMX29X_REG_PSSLVS4 + 1, 0x00},
 	{IMX29X_REG_PSSLVS0, 0x00}, /* PSSLVS0 = VBLK */
 	{IMX29X_REG_PSSLVS0 + 1, 0x00},
+
+	/*
+	 * QBC/output-path readout-area carryover reset (0x3E80-0x3EFC + a few
+	 * analog/timing regs). The output path leaves these configured for its
+	 * full-resolution window; neither the rest of this list nor the NQ mode
+	 * reg-lists reset them, so a binned capture taken after a QBC one would
+	 * inherit QBC's window and come out 2x H-stretched. XCLR is not wired on
+	 * this board and the sensor has no software register-reset (only standby,
+	 * which preserves the map - per the IMX492 datasheet, same silicon), so
+	 * restore them to their power-on (NQ) defaults here. Appended at the end so
+	 * the IMX29X_BINNED_COMMON_BLKLEVEL_INSERT split stays valid.
+	 */
+	{0x3052, 0xE8},
+	{0x3066, 0x00},
+	{0x30EF, 0x00},
+	{0x31F5, 0x00},
+	{0x3352, 0x4B},
+	{0x3356, 0x4A},
+	{0x353D, 0x00},
+	{0x3688, 0x00},
+	{0x371C, 0x01},
+	{0x372F, 0x00},
+	{0x3730, 0x00},
+	{0x3732, 0x00},
+	{0x3734, 0x36},
+	{0x3736, 0x43},
+	{0x3738, 0x39},
+	{0x3744, 0x00},
+	{0x375B, 0x00},
+	{0x3836, 0x30},
+	{0x38B3, 0x01},
+	{0x3A43, 0x01},
+	{0x3A54, 0x90},
+	{0x3A55, 0x00},
+	{0x3C08, 0x49},
+	{0x3C0C, 0x0D},
+	{0x3E80, 0x00},
+	{0x3E82, 0x06},
+	{0x3E84, 0xE8},
+	{0x3E85, 0x00},
+	{0x3E86, 0xD8},
+	{0x3E87, 0x01},
+	{0x3E88, 0x0C},
+	{0x3E89, 0x24},
+	{0x3E8A, 0x00},
+	{0x3E8B, 0x00},
+	{0x3E8E, 0x0C},
+	{0x3E8F, 0x24},
+	{0x3E90, 0x00},
+	{0x3E91, 0x00},
+	{0x3E94, 0x11},
+	{0x3E95, 0x0C},
+	{0x3E96, 0x18},
+	{0x3E98, 0x06},
+	{0x3E9A, 0x00},
+	{0x3E9C, 0xD8},
+	{0x3E9D, 0x01},
+	{0x3E9E, 0x24},
+	{0x3E9F, 0x00},
+	{0x3EA0, 0x00},
+	{0x3EA3, 0x0C},
+	{0x3EA4, 0x24},
+	{0x3EA5, 0x00},
+	{0x3EA6, 0x00},
+	{0x3EA9, 0x11},
+	{0x3EAA, 0x12},
+	{0x3EAB, 0x00},
+	{0x3EAC, 0x00},
+	{0x3EAD, 0x13},
+	{0x3EAE, 0x00},
+	{0x3EAF, 0x00},
+	{0x3EB0, 0x16},
+	{0x3EB1, 0x04},
+	{0x3EB2, 0x04},
+	{0x3EB3, 0x17},
+	{0x3EB4, 0x04},
+	{0x3EB5, 0x04},
+	{0x3EB6, 0x16},
+	{0x3EB7, 0x08},
+	{0x3EB8, 0x08},
+	{0x3EB9, 0x17},
+	{0x3EBA, 0x08},
+	{0x3EBB, 0x08},
+	{0x3EC0, 0x34},
+	{0x3ECC, 0x00},
+	{0x3ECD, 0x02},
+	{0x3ED0, 0x00},
+	{0x3ED1, 0x0F},
+	{0x3ED2, 0x01},
+	{0x3ED3, 0x00},
+	{0x3ED5, 0x0B},
+	{0x3ED6, 0x03},
+	{0x3ED9, 0xFF},
+	{0x3EE4, 0x18},
+	{0x3EE5, 0x18},
+	{0x3EE7, 0x05},
+	{0x3EF6, 0x24},
+	{0x3EF8, 0x0C},
+	{0x3EFA, 0x24},
+	{0x3EFC, 0x0C},
 };
 
 #include "imx294_quad_mode_tables.h"
@@ -582,6 +692,30 @@ static const struct imx29x_reg imx294_mode_00_regs[] = {
 	{0x3847, 0x00}, /* MDSEL9 */
 	{0x384A, 0x00}, /* MDSEL10 */
 	{0x384B, 0x00}, /* MDSEL10 */
+};
+
+/*
+ * 4:3 full-height 2x2-binned RAW10 — the 10-bit sibling of the existing 12-bit
+ * 4:3 mode (imx294_mode_00_regs). Same 4:3 readout (full height, ~90% width,
+ * 10.71 MP, no black bar) with the 10-bit encoding applied (MDSEL2 0x06->0x01,
+ * MDSEL15 0x1A->0x44, MDSEL13 0x08->0x0A, MDSEL14 0x72->0x75 — the same bit-depth
+ * delta the 17:9 10-bit readout uses).
+ *
+ * NOTE: a true full-3:2 *binned* mode is NOT achievable — the 4:3 readout caps H
+ * at 3792 (widening HTRIMMING reads garbage past col 3802) and the 17:9 readout
+ * caps V at ~2168 (extending Y_OUT reads a ~656-row black bar). Full 3:2 is
+ * QBC-only (its CFE path grabs the OB-included packet).
+ */
+static const struct imx29x_reg imx294_mode_00_10bit_regs[] = {
+	{0x3004, 0x00}, {0x3005, 0x01}, {0x3006, 0x02}, {0x3007, 0xA0},
+	{0x3019, 0x00}, {0x3030, 0x77}, {0x3034, 0x00}, {0x3035, 0x01},
+	{0x3036, 0x30}, {0x3037, 0x00}, {0x3038, 0x00}, {0x3039, 0x0F}, /* HTRIMMING_END 3840 (4:3 width) */
+	{0x3068, 0x44}, {0x3069, 0x00}, {0x3080, 0x00}, {0x3081, 0x01},
+	{0x30A8, 0x02}, {0x30E2, 0x00}, {0x312F, 0x10}, {0x3130, 0x18},
+	{0x3131, 0x0B}, {0x3132, 0x08}, {0x3133, 0x0B}, {0x357F, 0x0C},
+	{0x3580, 0x0A}, {0x3581, 0x0A}, {0x3583, 0x75}, {0x3600, 0x90},
+	{0x3601, 0x00}, {0x3846, 0x00}, {0x3847, 0x00}, {0x384A, 0x00},
+	{0x384B, 0x00},
 };
 
 /* 4096 x 2160 readout mode 1 */
@@ -772,7 +906,8 @@ static const struct imx29x_mode imx294_modes_10bit[] = {
 		.vmax_scale = 2,
 		.min_shr = 5,
 		.max_shr_margin = 1,
-		.integration_offset = 256,
+		/* Datasheet "internal offset period" for readout mode 2 is 217. */
+		.integration_offset = 217,
 		.crop = {
 			.left = 24,
 			.top = 40,
@@ -782,6 +917,31 @@ static const struct imx29x_mode imx294_modes_10bit[] = {
 		.reg_list = {
 			.num_of_regs = ARRAY_SIZE(imx294_mode_02_10bit_regs),
 			.regs = imx294_mode_02_10bit_regs,
+		},
+	}, {
+		/*
+		 * 4:3 full-height 2x2-binned RAW10 (3792x2824) — the 10-bit sibling of
+		 * the 12-bit 4:3 mode; full height, ~90% width, 10.71 MP, no black bar.
+		 */
+		.width = 3792,
+		.height = 2824,
+		.min_hmax = 1034,
+		.min_vmax = 1444,
+		.default_hmax = 1875,
+		.default_vmax = 1600,
+		.vmax_scale = 2,
+		.min_shr = 5,
+		.max_shr_margin = 1,
+		.integration_offset = 256,
+		.crop = {
+			.left = 80,
+			.top = 48,
+			.width = 7408,
+			.height = 5524,
+		},
+		.reg_list = {
+			.num_of_regs = ARRAY_SIZE(imx294_mode_00_10bit_regs),
+			.regs = imx294_mode_00_10bit_regs,
 		},
 	},
 };
@@ -797,8 +957,15 @@ static const struct imx29x_mode imx294_modes_12bit[] = {
 		.default_hmax = 1202,
 		.default_vmax = 5728,
 		.vmax_scale = 1,
-		.min_shr = 5,
-		.max_shr_margin = 1,
+		/*
+		 * Same silicon as IMX492 (8432x5648 12-bit) — use IMX492's SHR
+		 * limits. With min_shr=5 the shutter could be driven to SHR~5 at
+		 * long exposure, below the sensor's real minimum, and the QBC frame
+		 * came out black past ~90 ms integration (NQ/IMX492 are fine to
+		 * >0.5 s). IMX492's matching mode uses min_shr=12, max_shr_margin=4.
+		 */
+		.min_shr = 12,
+		.max_shr_margin = 4,
 		.integration_offset = 256,
 		.crop = {
 			.left = 0,
@@ -819,33 +986,14 @@ static const struct imx29x_mode imx294_modes_12bit[] = {
 		.y_out_size = 0x160E,
 		.is_qbc = true,
 	}, {
-		/* Quad Bayer 17:9 12-bit mode */
-		.width = 8432,
-		.height = 4348,
-		.min_hmax = 1202,
-		.min_vmax = 4428,
-		.default_hmax = 1202,
-		.default_vmax = 4428,
-		.vmax_scale = 1,
-		.min_shr = 5,
-		.max_shr_margin = 1,
-		.integration_offset = 256,
-		.crop = {
-			.left = 0,
-			.top = 646,
-			.width = 8240,
-			.height = 4336,
-		},
-		.reg_list = {
-			.num_of_regs = ARRAY_SIZE(imx294_quad_wide_17_9_12bit_regs),
-			.regs = imx294_quad_wide_17_9_12bit_regs,
-		},
-		.use_output_overrides = true,
-		.opb_size_v = 0x22,
-		.write_vsize = 0x111c,
-		.y_out_size = 0x10FA,
-		.is_qbc = true,
-	}, {
+		/*
+		 * NOTE: a Quad Bayer 17:9 mode is intentionally NOT exposed. Any
+		 * V-cropped 17:9 QBC readout drops the blue 2x2 block (raw B reads
+		 * ~black regardless of exposure); only the full-height readout reads
+		 * B. QBC is undocumented on the IMX294 (we run it on IMX492 register
+		 * values), and no available config both crops to 17:9 and reads B.
+		 * For a 17:9 QBC view, crop qbc_full (full readout, correct colour).
+		 */
 		/* Quad Bayer 4:3 12-bit mode */
 		.width = 7680,
 		.height = 5648,
@@ -854,8 +1002,9 @@ static const struct imx29x_mode imx294_modes_12bit[] = {
 		.default_hmax = 1108,
 		.default_vmax = 5728,
 		.vmax_scale = 1,
-		.min_shr = 5,
-		.max_shr_margin = 1,
+		/* IMX492 SHR limits (same silicon) — see all-pixel mode above. */
+		.min_shr = 12,
+		.max_shr_margin = 4,
 		.integration_offset = 256,
 		.crop = {
 			.left = 392,
@@ -926,7 +1075,7 @@ static const struct imx29x_mode imx294_modes_12bit[] = {
 		.min_hmax = 1055,
 		.min_vmax = 1111,
 		.default_hmax = 1200,
-		.default_vmax = 2500, /* 50 FPS */
+		.default_vmax = 2500, /* 24 FPS (1200x2500 @ 72MHz; was wrongly labelled 50) */
 		.vmax_scale = 2,
 		.min_shr = 5,
 		.max_shr_margin = 1,
@@ -943,17 +1092,23 @@ static const struct imx29x_mode imx294_modes_12bit[] = {
 		},
 	},
 	{
-		/* 3740 x 2778 readout mode 0, trimmed to active output lines */
+		/*
+		 * 3704 x 2778 4:3 RAW12 readout. This is datasheet 4:3 readout
+		 * mode 1 (MDSEL2/0x3005 = 0x06), NOT mode 0 — the 14-bit sibling is
+		 * mode 0 (MDSEL2 = 0x0B). Datasheet mode 1 values: HMAX min 1034,
+		 * VMAX min 1444, internal offset period 256. (Was previously using
+		 * min_hmax=1024 and mode-0's offset 551 by mistake.)
+		 */
 		.width = 3792,
 		.height = 2824,
-		.min_hmax = 1024,
+		.min_hmax = 1034,
 		.min_vmax = 1444,
 		.default_hmax = 1875,
 		.default_vmax = 1600, /* 24 FPS */
 		.vmax_scale = 2,
 		.min_shr = 5,
 		.max_shr_margin = 1,
-		.integration_offset = 551,
+		.integration_offset = 256,
 		.crop = {
 			.left = 80,
 			.top = 48,
@@ -1014,8 +1169,8 @@ static const struct imx29x_mode imx492_modes_10bit[] = {
 			.height = 5628,
 		},
 		.reg_list = {
-			.num_of_regs = ARRAY_SIZE(imx29x_all_pixel_10bit_regs),
-			.regs = imx29x_all_pixel_10bit_regs,
+			.num_of_regs = ARRAY_SIZE(imx492_all_pixel_10bit_regs),
+			.regs = imx492_all_pixel_10bit_regs,
 		},
 		.use_output_overrides = true,
 		.opb_size_v = 0x20,
@@ -1039,8 +1194,8 @@ static const struct imx29x_mode imx492_modes_10bit[] = {
 			.height = 4336,
 		},
 		.reg_list = {
-			.num_of_regs = ARRAY_SIZE(imx29x_wide_17_9_10bit_regs),
-			.regs = imx29x_wide_17_9_10bit_regs,
+			.num_of_regs = ARRAY_SIZE(imx492_wide_17_9_10bit_regs),
+			.regs = imx492_wide_17_9_10bit_regs,
 		},
 		.use_output_overrides = true,
 		.opb_size_v = 0x20,
@@ -1064,8 +1219,8 @@ static const struct imx29x_mode imx492_modes_10bit[] = {
 			.height = 5628,
 		},
 		.reg_list = {
-			.num_of_regs = ARRAY_SIZE(imx29x_four_three_10bit_regs),
-			.regs = imx29x_four_three_10bit_regs,
+			.num_of_regs = ARRAY_SIZE(imx492_four_three_10bit_regs),
+			.regs = imx492_four_three_10bit_regs,
 		},
 		.use_output_overrides = true,
 		.opb_size_v = 0x20,
@@ -1093,8 +1248,8 @@ static const struct imx29x_mode imx492_modes_12bit[] = {
 			.height = 5628,
 		},
 		.reg_list = {
-			.num_of_regs = ARRAY_SIZE(imx29x_all_pixel_12bit_regs),
-			.regs = imx29x_all_pixel_12bit_regs,
+			.num_of_regs = ARRAY_SIZE(imx492_all_pixel_12bit_regs),
+			.regs = imx492_all_pixel_12bit_regs,
 		},
 		.use_output_overrides = true,
 		.opb_size_v = 0x20,
@@ -1118,8 +1273,8 @@ static const struct imx29x_mode imx492_modes_12bit[] = {
 			.height = 4336,
 		},
 		.reg_list = {
-			.num_of_regs = ARRAY_SIZE(imx29x_wide_17_9_12bit_regs),
-			.regs = imx29x_wide_17_9_12bit_regs,
+			.num_of_regs = ARRAY_SIZE(imx492_wide_17_9_12bit_regs),
+			.regs = imx492_wide_17_9_12bit_regs,
 		},
 		.use_output_overrides = true,
 		.opb_size_v = 0x20,
@@ -1143,8 +1298,8 @@ static const struct imx29x_mode imx492_modes_12bit[] = {
 			.height = 5628,
 		},
 		.reg_list = {
-			.num_of_regs = ARRAY_SIZE(imx29x_four_three_12bit_regs),
-			.regs = imx29x_four_three_12bit_regs,
+			.num_of_regs = ARRAY_SIZE(imx492_four_three_12bit_regs),
+			.regs = imx492_four_three_12bit_regs,
 		},
 		.use_output_overrides = true,
 		.opb_size_v = 0x20,
@@ -1570,10 +1725,10 @@ static int imx29x_write_binned_common_regs(struct imx29x *imx29x)
 	int ret;
 
 	if (!data->set_binned_blklevel)
-		return imx29x_write_regs(imx29x, imx294_common_regs,
-					 ARRAY_SIZE(imx294_common_regs));
+		return imx29x_write_regs(imx29x, imx29x_common_regs,
+					 ARRAY_SIZE(imx29x_common_regs));
 
-	ret = imx29x_write_regs(imx29x, imx294_common_regs,
+	ret = imx29x_write_regs(imx29x, imx29x_common_regs,
 				IMX29X_BINNED_COMMON_BLKLEVEL_INSERT);
 	if (ret)
 		return ret;
@@ -1583,8 +1738,8 @@ static int imx29x_write_binned_common_regs(struct imx29x *imx29x)
 	if (ret)
 		return ret;
 
-	tail = imx294_common_regs + IMX29X_BINNED_COMMON_BLKLEVEL_INSERT;
-	tail_len = ARRAY_SIZE(imx294_common_regs) -
+	tail = imx29x_common_regs + IMX29X_BINNED_COMMON_BLKLEVEL_INSERT;
+	tail_len = ARRAY_SIZE(imx29x_common_regs) -
 		   IMX29X_BINNED_COMMON_BLKLEVEL_INSERT;
 
 	return imx29x_write_regs(imx29x, tail, tail_len);
@@ -2229,19 +2384,26 @@ static int imx29x_write_stream_on_sequence(struct imx29x *imx29x)
 	return 0;
 }
 
-static int imx29x_start_streaming_output(struct imx29x *imx29x,
-					 const struct imx29x_mode *mode)
+/*
+ * Apply one mode's full power-up + configuration sequence. Output-override
+ * (QBC / full-readout) modes use a self-contained reg-list layered on a minimal
+ * post-PLRD init and then have their windowing overridden; binned (NQ) modes
+ * layer on the shared binned-common init (imx29x_common_regs), which restores
+ * the readout-area registers an earlier QBC capture would otherwise leave set
+ * (the QBC -> NQ carryover that 2x H-stretched the next NQ frame).
+ */
+static int imx29x_start_streaming_mode(struct imx29x *imx29x,
+				       const struct imx29x_mode *mode)
 {
 	struct i2c_client *client = v4l2_get_subdevdata(&imx29x->sd);
 	const struct imx29x_reg_list *reg_list = &mode->reg_list;
+	bool output = mode->use_output_overrides;
 	int ret;
 
 	ret = imx29x_write_regs(imx29x, imx29x_startup_pre_regs,
 				ARRAY_SIZE(imx29x_startup_pre_regs));
 	if (ret) {
-		dev_err(&client->dev,
-			"%s failed to run startup pre-sequence\n",
-			__func__);
+		dev_err(&client->dev, "%s failed startup pre-sequence\n", __func__);
 		return ret;
 	}
 
@@ -2251,12 +2413,20 @@ static int imx29x_start_streaming_output(struct imx29x *imx29x,
 		return ret;
 	}
 
-	ret = imx29x_write_regs(imx29x, imx29x_startup_post_plrd_regs,
-				ARRAY_SIZE(imx29x_startup_post_plrd_regs));
+	/*
+	 * Base init: output modes need only the minimal post-PLRD sequence
+	 * (their reg-list is self-contained); binned modes layer on the shared
+	 * binned-common init, which also restores the readout-area registers a
+	 * prior QBC capture would otherwise have left set.
+	 */
+	if (output) {
+		ret = imx29x_write_regs(imx29x, imx29x_startup_post_plrd_regs,
+					ARRAY_SIZE(imx29x_startup_post_plrd_regs));
+	} else {
+		ret = imx29x_write_binned_common_regs(imx29x);
+	}
 	if (ret) {
-		dev_err(&client->dev,
-			"%s failed to run startup post-PLRD sequence\n",
-			__func__);
+		dev_err(&client->dev, "%s failed base init\n", __func__);
 		return ret;
 	}
 
@@ -2266,58 +2436,10 @@ static int imx29x_start_streaming_output(struct imx29x *imx29x,
 		return ret;
 	}
 
-	ret = imx29x_apply_output_overrides(imx29x, mode);
-	if (ret)
-		return ret;
-
-	ret = imx29x_write_regs(imx29x, imx29x_standby_release_regs,
-				ARRAY_SIZE(imx29x_standby_release_regs));
-	if (ret) {
-		dev_err(&client->dev, "%s failed to release standby\n",
-			__func__);
-		return ret;
-	}
-
-	ret = __v4l2_ctrl_handler_setup(imx29x->sd.ctrl_handler);
-	if (ret)
-		return ret;
-
-	return imx29x_write_stream_on_sequence(imx29x);
-}
-
-static int imx29x_start_streaming_binned(struct imx29x *imx29x,
-					 const struct imx29x_mode *mode)
-{
-	struct i2c_client *client = v4l2_get_subdevdata(&imx29x->sd);
-	const struct imx29x_reg_list *reg_list = &mode->reg_list;
-	int ret;
-
-	ret = imx29x_write_regs(imx29x, imx29x_startup_pre_regs,
-				ARRAY_SIZE(imx29x_startup_pre_regs));
-	if (ret) {
-		dev_err(&client->dev,
-			"%s failed to run startup pre-sequence\n",
-			__func__);
-		return ret;
-	}
-
-	ret = imx29x_write_plrd_regs(imx29x);
-	if (ret) {
-		dev_err(&client->dev, "%s failed to set PLRD\n", __func__);
-		return ret;
-	}
-
-	ret = imx29x_write_binned_common_regs(imx29x);
-	if (ret) {
-		dev_err(&client->dev, "%s failed to set common settings\n",
-			__func__);
-		return ret;
-	}
-
-	ret = imx29x_write_regs(imx29x, reg_list->regs, reg_list->num_of_regs);
-	if (ret) {
-		dev_err(&client->dev, "%s failed to set mode\n", __func__);
-		return ret;
+	if (output) {
+		ret = imx29x_apply_output_overrides(imx29x, mode);
+		if (ret)
+			return ret;
 	}
 
 	ret = __v4l2_ctrl_handler_setup(imx29x->sd.ctrl_handler);
@@ -2327,30 +2449,21 @@ static int imx29x_start_streaming_binned(struct imx29x *imx29x,
 	ret = imx29x_write_regs(imx29x, imx29x_standby_release_regs,
 				ARRAY_SIZE(imx29x_standby_release_regs));
 	if (ret) {
-		dev_err(&client->dev, "%s failed to release binned standby\n",
-			__func__);
+		dev_err(&client->dev, "%s failed to release standby\n", __func__);
 		return ret;
 	}
 
 	return imx29x_write_stream_on_sequence(imx29x);
 }
-
 /* Start streaming */
 static int imx29x_start_streaming(struct imx29x *imx29x,
 				  struct v4l2_subdev_state *state)
 {
-	const struct imx29x_mode *mode;
 	u32 fmt_code;
-	int ret;
+	const struct imx29x_mode *mode = imx29x_state_get_mode(imx29x, state,
+							       &fmt_code);
 
-	mode = imx29x_state_get_mode(imx29x, state, &fmt_code);
-
-	if (mode->use_output_overrides)
-		ret = imx29x_start_streaming_output(imx29x, mode);
-	else
-		ret = imx29x_start_streaming_binned(imx29x, mode);
-
-	return ret;
+	return imx29x_start_streaming_mode(imx29x, mode);
 }
 
 /* Stop streaming */
