@@ -16,7 +16,7 @@ runtime PM, endpoint validation, and subdev registration.
 Fun fact: The reason why we can do this is because essentially IMX294 = QuadBayer and IMX492 = Normal Bayer and both are the same silicon. So they not only share a lot of the code but you can run either one with the other drivers. That brings some fun to how to use it, see Non-standard or hardware-specific modes section for more details.  
 
 The code is mostly generated from my IMX294 and IMX492 driver with the help of codex and iterated on RPI5, but I do wanna say there is a catch - you need to enable RP1 overclock to enable the full potential of this sensor, additionally because RPI's CFE has a bug for 14bit and 16bit, libcamera's RPI pipeline fixed the bug in the software so the 14bit mode may be bottlenecked by the CPU speed abd not reach the top speed stablely.
-<img width="1873" height="753" alt="image" src="https://github.com/user-attachments/assets/1ce5708c-4402-4ce4-adf4-e73a97b83a9f" />
+<img width="1773" height="868" alt="image" src="https://github.com/user-attachments/assets/0f88870e-4242-4eed-8bcd-dfbeb49887de" />
 
 ## Features
 
