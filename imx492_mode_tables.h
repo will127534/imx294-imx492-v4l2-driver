@@ -1,6 +1,12 @@
 /* SPDX-License-Identifier: GPL-2.0 */
+/*
+ * IMX492 full-resolution (normal-Bayer) readout register tables: all-pixel,
+ * 17:9 and 4:3 scan modes at 10- and 12-bit. IMX492-only -- the IMX294's
+ * full-resolution readout is Quad-Bayer (see imx294_quad_mode_tables.h). These
+ * are self-contained mode tables applied via the output-override path.
+ */
 
-static const struct imx29x_reg imx29x_all_pixel_12bit_regs[] = {
+static const struct imx29x_reg imx492_all_pixel_12bit_regs[] = {
 	{0x3C00, 0x00},
 	{0x3C01, 0x00},
 	{0x3004, 0x1C},
@@ -205,7 +211,7 @@ static const struct imx29x_reg imx29x_all_pixel_12bit_regs[] = {
 	{0x3EFC, 0x10},
 };
 
-static const struct imx29x_reg imx29x_all_pixel_10bit_regs[] = {
+static const struct imx29x_reg imx492_all_pixel_10bit_regs[] = {
 	{0x3C00, 0x01},
 	{0x3C01, 0x01},
 	{0x3004, 0x1C},
@@ -410,7 +416,7 @@ static const struct imx29x_reg imx29x_all_pixel_10bit_regs[] = {
 	{0x3EFC, 0x10},
 };
 
-static const struct imx29x_reg imx29x_wide_17_9_12bit_regs[] = {
+static const struct imx29x_reg imx492_wide_17_9_12bit_regs[] = {
 	{0x3C00, 0x00},
 	{0x3C01, 0x00},
 	{0x3004, 0x1C},
@@ -615,7 +621,7 @@ static const struct imx29x_reg imx29x_wide_17_9_12bit_regs[] = {
 	{0x3EFC, 0x10},
 };
 
-static const struct imx29x_reg imx29x_wide_17_9_10bit_regs[] = {
+static const struct imx29x_reg imx492_wide_17_9_10bit_regs[] = {
 	{0x3C00, 0x01},
 	{0x3C01, 0x01},
 	{0x3004, 0x1C},
@@ -820,7 +826,7 @@ static const struct imx29x_reg imx29x_wide_17_9_10bit_regs[] = {
 	{0x3EFC, 0x10},
 };
 
-static const struct imx29x_reg imx29x_four_three_12bit_regs[] = {
+static const struct imx29x_reg imx492_four_three_12bit_regs[] = {
 	{0x3C00, 0x00},
 	{0x3C01, 0x00},
 	{0x3004, 0x1C},
@@ -1025,7 +1031,7 @@ static const struct imx29x_reg imx29x_four_three_12bit_regs[] = {
 	{0x3EFC, 0x10},
 };
 
-static const struct imx29x_reg imx29x_four_three_10bit_regs[] = {
+static const struct imx29x_reg imx492_four_three_10bit_regs[] = {
 	{0x3C00, 0x01},
 	{0x3C01, 0x01},
 	{0x3004, 0x1C},

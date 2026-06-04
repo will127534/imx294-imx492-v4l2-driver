@@ -16,7 +16,7 @@ runtime PM, endpoint validation, and subdev registration.
 Fun fact: The reason why we can do this is because essentially IMX294 = QuadBayer and IMX492 = Normal Bayer and both are the same silicon. So they not only share a lot of the code but you can run either one with the other drivers. That brings some fun to how to use it, see Non-standard or hardware-specific modes section for more details.  
 
 The code is mostly generated from my IMX294 and IMX492 driver with the help of codex and iterated on RPI5, but I do wanna say there is a catch - you need to enable RP1 overclock to enable the full potential of this sensor, additionally because RPI's CFE has a bug for 14bit and 16bit, libcamera's RPI pipeline fixed the bug in the software so the 14bit mode may be bottlenecked by the CPU speed abd not reach the top speed stablely.
-<img width="1873" height="753" alt="image" src="https://github.com/user-attachments/assets/1ce5708c-4402-4ce4-adf4-e73a97b83a9f" />
+<img width="1773" height="868" alt="image" src="https://github.com/user-attachments/assets/0f88870e-4242-4eed-8bcd-dfbeb49887de" />
 
 ## Features
 
@@ -33,7 +33,12 @@ Non-standard or hardware-specific modes stay gated by dtoverlay properties:
 
 - `quad-bayer-modes` exposes the experimental IMX294 quad-Bayer full-resolution
   12-bit modes. These still use standard Bayer media-bus codes because Linux
-  has no standard 4x4 quad-Bayer code.
+  has no standard 4x4 quad-Bayer code. The driver advertises QBC modes to
+  userspace via the read-only/volatile V4L2 control
+  `V4L2_CID_USER_QUADBAYER_MODE` (`V4L2_CID_USER_BASE + 0x10b8`) — libcamera's
+  pisp pipeline handler reads it at configure time to engage the in-place
+  block-average remosaic + SW stats producer for those modes (see the
+  `qbc-pisp-handler` branch in the project's libcamera fork).
 - `color-binned-modes` exposes the IMX492 color binned mode, which is useful
   for geometry/timing testing but is expected to collapse color information.
 - `mono` exposes IMX492 Y10/Y12 formats, and the mono 12-bit binned mode, for
